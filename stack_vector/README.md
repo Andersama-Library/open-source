@@ -50,6 +50,6 @@ With a slight additional cost of space it is a fantastic drop-in replacement for
 ```c
 stack_vector<int,1024> buffer{};
 for (size_t i = 0; i < 512; i++) {
-	owning_vector.unchecked_push_back(i);
+	buffer.unchecked_push_back(i);
 }
 ```
