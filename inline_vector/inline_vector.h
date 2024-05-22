@@ -1,6 +1,7 @@
 #pragma once
 #include <algorithm>
 #include <array>
+#include <vector>
 #include <initializer_list>
 #include <iterator>
 #include <memory>
@@ -160,6 +161,16 @@ public:
 		constexpr inline_vector() = default;
 		constexpr inline_vector(iterator data, iterator end = {}, iterator cap = {}) noexcept
 			: _data(data), _end(end), _cap(cap){};
+
+		template<typename T, typename A>
+		constexpr inline_vector(const std::vector<T,A> &target) {
+			inline_vector(target.data(), target.data() + target.size(), target.size());
+		}
+
+		template<typename T, size_t N>
+		constexpr inline_vector(const std::array<T,N> &target) {
+			inline_vector(target.data(), target.data() + target.size(), target.data() + target.capacity());
+		}
 
 		// DANGER DANGER...HIGH VOLTAGE
 		constexpr inline_vector(const inline_vector &other)
