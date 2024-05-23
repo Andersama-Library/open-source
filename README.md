@@ -11,7 +11,7 @@ There are many programming libraries out there, and here is part of my own. The 
 
 Notes and Usage
 ---------------
-This branch is just a landing page, for utilities for a particular language check out the other branches.
+This branch is a collection of c++ libraries, for utilities for a particular language check out the other branches.
 The contents of this repo in general will be under the license provided in [LICENSE.md](LICENSE.md). The licenses of some folders may be different be sure to check.
 
 CMake Single Headers
