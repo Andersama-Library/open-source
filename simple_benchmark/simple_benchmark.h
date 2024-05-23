@@ -18,30 +18,30 @@ namespace simple_bench {
 
 
 	template <size_t N> struct batch_result {
-		std::string title;
-		timing_result<N> result;
+		std::string      title;
+		timing_result<N> timings;
 		size_t           loops;
 		size_t           batch_count;
 
 		constexpr double get_average_operation_ns(size_t index) noexcept {
-			return (double)result.nanoseconds[index] / (double)(loops * batch_count);
+			return (double)timings.nanoseconds[index] / (double)(loops * batch_count);
 		}
 		constexpr double get_total_ns(size_t index) noexcept {
-			return (double)result.nanoseconds[index];
+			return (double)timings.nanoseconds[index];
 		}
 	};
 	// same as above but with a string_view if we don't need to allocate
 	template <size_t N> struct c_batch_result {
 		std::string_view title;
-		timing_result<N> result;
+		timing_result<N> timings;
 		size_t           loops;
 		size_t           batch_count;
 
 		constexpr double get_average_operation_ns(size_t index) noexcept {
-			return (double)result.nanoseconds[index] / (double)(loops * batch_count);
+			return (double)timings.nanoseconds[index] / (double)(loops * batch_count);
 		}
 		constexpr double get_total_ns(size_t index) noexcept {
-			return (double)result.nanoseconds[index];
+			return (double)timings.nanoseconds[index];
 		}
 	};
 
@@ -90,9 +90,10 @@ namespace simple_bench {
 	/*
 	Runs a benchmark which requires a bit of setup and cleanup to work.
 	*Assumes setup and cleanup functions can be run back to back without the tested function
+	batch is the # of operations performed inside the callback Op, this is used in batch_result.get_average_operation_ns
 	Output:
-		result.result.nanoseconds[0] (rough) total time spent in setup and cleanup work
-		result.result.nanoseconds[1] (rough) total time spent in actual work
+		result.timings.nanoseconds[0] (rough) total time spent in setup and cleanup work
+		result.timings.nanoseconds[1] (rough) total time spent in actual work
 	*/
 	template <typename Setup, typename Op, typename Cleanup>
 	batch_result<2> run_with_setup(std::string_view v, size_t batch, Setup S, Op O, Cleanup C) {
@@ -141,11 +142,11 @@ namespace simple_bench {
 		auto t3 = Clock::now();
 		tmp_0.nanoseconds[0] = (t3 - t2).count();
 
-		result.result.nanoseconds[0] = tmp_0.nanoseconds[0];
+		result.timings.nanoseconds[0] = tmp_0.nanoseconds[0];
 		// the dirty trick of keeping the number of loops the same means we can take the total time spent and
 		// subtract the total time spent in just the setup and cleanup sections, no adjustments required
 		
-		result.result.nanoseconds[1] = tmp_0.nanoseconds[1] - tmp_0.nanoseconds[0];
+		result.timings.nanoseconds[1] = tmp_0.nanoseconds[1] - tmp_0.nanoseconds[0];
 
 		result.loops = (loop_count + 1);
 
@@ -154,8 +155,9 @@ namespace simple_bench {
 
 	/*
 	Runs a basic benchmark of a function
+	batch is the # of operations performed inside the callback Op, this is used in batch_result.get_average_operation_ns
 	Output:
-		result.result.nanoseconds[0] (rough) total time spent in actual work
+		result.timings.nanoseconds[0] (rough) total time spent in actual work
 	*/
 	template <typename Op> batch_result<1> run(std::string_view v, size_t batch, Op O) {
 		batch_result<1> result;
@@ -179,13 +181,21 @@ namespace simple_bench {
 			loop_0++;
 		} while (loop_0 < loop_count);
 		auto t1              = Clock::now();
-		result.result.nanoseconds[0] = (t1 - t0).count();
+		result.timings.nanoseconds[0] = (t1 - t0).count();
 		result.loops                 = loop_count + 1;
 
 		return result;
 	}
 
 
+	/*
+	Runs a benchmark which requires a bit of setup and cleanup to work.
+	*Assumes setup and cleanup functions can be run back to back without the tested function
+	batch is the # of operations performed inside the callback Op, this is used in c_batch_result.get_average_operation_ns
+	Output:
+		result.timings.nanoseconds[0] (rough) total time spent in setup and cleanup work
+		result.timings.nanoseconds[1] (rough) total time spent in actual work
+		*/
 	template <typename Setup, typename Op, typename Cleanup>
 	c_batch_result<2> c_run_with_setup(std::string_view v, size_t batch, Setup S, Op O, Cleanup C) {
 		c_batch_result<2> result;
@@ -231,14 +241,20 @@ namespace simple_bench {
 		auto t3              = Clock::now();
 		tmp_0.nanoseconds[0] = (t3 - t2).count();
 
-		result.result.nanoseconds[0] = tmp_0.nanoseconds[0];
-		result.result.nanoseconds[1] = tmp_0.nanoseconds[1] - tmp_0.nanoseconds[0];
+		result.timings.nanoseconds[0] = tmp_0.nanoseconds[0];
+		result.timings.nanoseconds[1] = tmp_0.nanoseconds[1] - tmp_0.nanoseconds[0];
 
 		result.loops = (loop_count + 1);
 
 		return result;
 	}
 
+	/*
+	Runs a basic benchmark of a function
+	batch is the # of operations performed inside the callback Op, this is used in c_batch_result.get_average_operation_ns
+	Output:
+		result.timings.nanoseconds[0] (rough) total time spent in actual work
+		*/
 	template <typename Op> c_batch_result<1> c_run(std::string_view v, size_t batch, Op O) {
 		c_batch_result<1> result;
 		result.title = v;
@@ -261,7 +277,7 @@ namespace simple_bench {
 			loop_0++;
 		} while (loop_0 < loop_count);
 		auto t1                      = Clock::now();
-		result.result.nanoseconds[0] = (t1 - t0).count();
+		result.timings.nanoseconds[0] = (t1 - t0).count();
 		result.loops                 = loop_count + 1;
 
 		return result;
