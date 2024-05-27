@@ -14,11 +14,10 @@ Original Author: Wang Yi <godspeed_china@yeah.net>
 Waterhash Variant Author: Tommy Ettinger <tommy.ettinger@gmail.com>
 Constexpr and Modularization: Alexander Anderson <anderson.john.alexander@gmail.com>
 */
+constexpr uint64_t _waterp0 = 0xa0761d65ull, _waterp1 = 0xe7037ed1ull, _waterp2 = 0x8ebc6af1ull;
+constexpr uint64_t _waterp3 = 0x589965cdull, _waterp4 = 0x1d8e4e27ull, _waterp5 = 0xeb44accbull;
 
 export {
-	constexpr uint64_t _waterp0 = 0xa0761d65ull, _waterp1 = 0xe7037ed1ull, _waterp2 = 0x8ebc6af1ull;
-	constexpr uint64_t _waterp3 = 0x589965cdull, _waterp4 = 0x1d8e4e27ull, _waterp5 = 0xeb44accbull;
-
 	constexpr always_force_inline uint64_t _watermum(uint64_t A, uint64_t B) {
 		uint64_t r = A * B;
 		return r - (r >> 32);

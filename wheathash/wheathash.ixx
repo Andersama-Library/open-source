@@ -3,7 +3,6 @@ import <cstdint>;
 import <cstring>;
 //#include <cstdint>
 //#include <cstring>
-
 #include "forceinline/forceinline.h"
 export module wheathash;
 
@@ -15,11 +14,10 @@ Original Author: Wang Yi <godspeed_china@yeah.net>
 Wheathash Variant Author: Tommy Ettinger <tommy.ettinger@gmail.com>
 Constexpr and Modularization: Alexander Anderson <anderson.john.alexander@gmail.com>
 */
+constexpr uint64_t _wheatp0 = 0xa0761d6478bd642full, _wheatp1 = 0xe7037ed1a0b428dbull, _wheatp2 = 0x8ebc6af09c88c6e3ull;
+constexpr uint64_t _wheatp3 = 0x589965cc75374cc3ull, _wheatp4 = 0x1d8e4e27c47d124full, _wheatp5 = 0xeb44accab455d165ull;
 
 export {
-	constexpr uint64_t _wheatp0 = 0xa0761d6478bd642full, _wheatp1 = 0xe7037ed1a0b428dbull, _wheatp2 = 0x8ebc6af09c88c6e3ull;
-	constexpr uint64_t _wheatp3 = 0x589965cc75374cc3ull, _wheatp4 = 0x1d8e4e27c47d124full, _wheatp5 = 0xeb44accab455d165ull;
-
 	always_force_inline uint64_t _wheatmum(uint64_t A, uint64_t B) {
 		uint64_t r = A * B;
 		return r - (r >> 32);
