@@ -1,7 +1,10 @@
 module;
 import <cstdint>;
 import <cstring>;
-import "forceinline/forceinline.h"
+//#include <cstdint>
+//#include <cstring>
+
+#include "forceinline/forceinline.h"
 export module wheathash;
 
 /*
