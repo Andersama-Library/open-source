@@ -258,7 +258,7 @@ namespace circular_buffer {
 				capacity = (c ? c : c + 1);
 				// determine the "real" read_idx
 				read_idx = r % capacity;
-			}
+			};
 
 			constexpr value_type& operator*()
 			{
@@ -329,12 +329,12 @@ namespace circular_buffer {
 				return tmp;
 			};
 
-			difference_type operator-(const random_access_it& other) const noexcept
+			constexpr difference_type operator-(const random_access_it& other) const noexcept
 			{
 				assert((other.data_ptr == data_ptr) && (other.capacity == capacity) &&
 					   "Must be an iterator to the same container's contents");
 				return static_cast<difference_type>(write_idx - other.write_idx);
-			}
+			};
 
 			constexpr random_access_it& operator+=(difference_type n) noexcept
 			{
@@ -354,10 +354,28 @@ namespace circular_buffer {
 				return *this;
 			};
 
+			constexpr random_access_it operator+(difference_type n) noexcept
+			{
+				random_access_it bump = *this;
+				return bump += n;
+			};
+
 			constexpr random_access_it operator+(difference_type n) const noexcept
 			{
 				random_access_it bump = *this;
 				return bump += n;
+			};
+
+			constexpr random_access_it operator-(difference_type n) noexcept
+			{
+				random_access_it bump = *this;
+				return bump -= n;
+			};
+
+			constexpr random_access_it operator-(difference_type n) const noexcept
+			{
+				random_access_it bump = *this;
+				return bump -= n;
 			};
 
 			constexpr random_access_it& operator-=(difference_type n) noexcept
@@ -372,61 +390,55 @@ namespace circular_buffer {
 				return *this;
 			};
 
-			constexpr random_access_it operator-(difference_type n) const noexcept
-			{
-				random_access_it bump = *this;
-				return bump += n;
-			}
-
 			constexpr reference operator[](size_t n)
 			{
 				return data_ptr[(read_idx + n) % capacity];
-			}
+			};
 
 			constexpr reference operator[](size_t n) const
 			{
 				return data_ptr[(read_idx + n) % capacity];
-			}
+			};
 
 			constexpr pointer operator->() noexcept
 			{
 				return data_ptr + (read_idx % capacity);
-			}
+			};
 
 			constexpr pointer operator->() const noexcept
 			{
 				return data_ptr + (read_idx % capacity);
-			}
+			};
 
 			constexpr bool operator<(random_access_it other) const noexcept
 			{
 				return (data_ptr == other.data_ptr) & (capacity == other.capacity) & (write_idx < other.write_idx);
-			}
+			};
 
 			constexpr bool operator>(random_access_it other) const noexcept
 			{
 				return (data_ptr == other.data_ptr) & (capacity == other.capacity) & (write_idx > other.write_idx);
-			}
+			};
 
 			constexpr bool operator>=(random_access_it other) const noexcept
 			{
 				return (data_ptr == other.data_ptr) & (capacity == other.capacity) & (write_idx >= other.write_idx);
-			}
+			};
 
 			constexpr bool operator<=(random_access_it other) const noexcept
 			{
 				return (data_ptr == other.data_ptr) & (capacity == other.capacity) & (write_idx <= other.write_idx);
-			}
+			};
 
 			constexpr bool operator==(random_access_it other) const noexcept
 			{
 				return (data_ptr == other.data_ptr) & (capacity == other.capacity) & (write_idx == other.write_idx);
-			}
+			};
 
 			constexpr bool operator!=(random_access_it other) const noexcept
 			{
 				return !(*this == other);
-			}
+			};
 		};
 
 		using iterator               = random_access_it;
