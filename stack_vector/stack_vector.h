@@ -6,7 +6,6 @@
 #include <memory>
 #include <stdexcept>
 
-#include "forceinline/forceinline.h"
 #include <assert.h>
 
 /*
@@ -32,6 +31,25 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
+
+#ifndef always_force_inline
+#if __GNUC__
+#define always_force_inline __attribute__((always_inline))
+#elif __clang__
+#define always_force_inline __attribute__((always_inline))
+#elif _MSC_VER
+#define always_force_inline __forceinline
+#elif __EMSCRIPTEN__
+#define always_force_inline
+#elif __MINGW32__
+#define always_force_inline
+#elif __MINGW64__
+#define always_force_inline
+#else
+#define always_force_inline
+#endif
+#endif
+
 
 namespace stack_vector {
     // for some detail trickery
@@ -175,7 +193,7 @@ namespace stack_vector {
             }
 
             if constexpr (::std::is_same<::std::random_access_iterator_tag,
-				::std::iterator_traits<It1>::iterator_category>::value) {
+				typename ::std::iterator_traits<It1>::iterator_category>::value) {
                 size_type insert_count = last - first;
                 if (insert_count > (capacity() - size())) { // error? or noop
                     if constexpr (::stack_vector::details::error_handler !=
@@ -311,7 +329,7 @@ namespace stack_vector {
         };
         template <class It1> constexpr void assign(It1 first, It1 last) {
             if constexpr (::std::is_same<::std::random_access_iterator_tag,
-				::std::iterator_traits<It1>::iterator_category>::value) {
+				typename ::std::iterator_traits<It1>::iterator_category>::value) {
                 size_type insert_count = last - first;
                 if ((size() + insert_count) <= capacity()) {
                     clear();
