@@ -99,7 +99,7 @@ namespace simple_benchmark {
 		batch              = batch ? batch : 1;
 		result.batch_count = batch;
 
-		timing_result<2, ::std::string_view> tmp_0;
+		timing_result<2> tmp_0;
 
 		tmp_0.nanoseconds[0] = 0;
 		tmp_0.nanoseconds[1] = 0;
