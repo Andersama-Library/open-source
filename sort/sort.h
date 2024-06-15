@@ -94,31 +94,6 @@ namespace sort {
 
 	template<class T> using remove_cvref_t = typename std::remove_cv_t<std::remove_reference_t<T>>;
 	#if defined(cplusplus_version_20)
-	#if 0
-	template<class T1, class T2>
-	concept same_impl = // Must be a distinct concept to provide symmetric subsumption for same_as
-	#ifdef __clang__
-	__is_same(T1, T2);
-	#else  // ^^^ use intrinsic / no intrinsic vvv
-	std::is_same_v<T1, T2>;
-	#endif // ^^^ no intrinsic ^^^
-
-	template<class _Ty> concept is_specialized = same_impl<typename _Ty::_From_primary, _Ty>;
-
-	template<class T>
-	using iter_difference_t =
-	std::conditional_t<is_specialized<std::iterator_traits<sort::remove_cvref_t<T>>>, // supposed to be a
-	// sfinae check
-	std::incrementable_traits<sort::remove_cvref_t<T>>,
-	std::iterator_traits<sort::remove_cvref_t<T>>>::difference_type;
-
-	template<class T>
-	using iter_value_t =
-	std::conditional_t<is_specialized<std::iterator_traits<sort::remove_cvref_t<T>>>, // supposed to be a
-	// sfinae check
-	std::indirectly_readable_traits<sort::remove_cvref_t<T>>,
-	std::iterator_traits<sort::remove_cvref_t<T>>>::value_type;
-	#endif
 	template<class T>
 	using iter_difference_t = ::std::iter_difference_t<T>;
 
@@ -129,6 +104,9 @@ namespace sort {
 
 	template<class T> using iter_value_t = typename std::iterator_traits<sort::remove_cvref_t<T>>::value_type;
 	#endif
+
+	template<class RAIt, class Compare = std::less<>>
+	constexpr void insertion_sort(RAIt, RAIt, Compare);
 
 	template<class ForwardIt1, class ForwardIt2> constexpr void iter_swap(ForwardIt1 a, ForwardIt2 b)
 	{
@@ -170,6 +148,27 @@ namespace sort {
 		}
 	}
 
+	template<typename T> release_force_inline constexpr void swap_branchless_conditional(T& lhs, T& rhs, bool c)
+	{
+		if constexpr (::std::is_trivial<T>::value) {
+			T tmp[2] = { lhs, rhs };
+			lhs = tmp[c];
+			rhs = tmp[!c];
+		}
+		else if constexpr (::std::is_invocable<decltype(lhs.swap), T&>::value) { // use type's provided swap function if it exists
+			if (c)
+			lhs.swap(rhs);
+		}
+		else if constexpr (::std::is_swappable_with<T, T>::value) { // fallback to std::swap, not necessarily constexpr
+			using std::swap;
+			if (c)
+			swap(lhs, rhs);
+		}
+		else {
+			static_assert(false, "swap_branchless_unconditional requires that the types are swappable!");
+		}
+	}
+
 	template<class ForwardIt, class UnaryPred>
 	constexpr ForwardIt partition(ForwardIt first, ForwardIt last, UnaryPred p)
 	{
@@ -204,8 +203,10 @@ namespace sort {
 		size_t start_end[256 + 1];
 
 		for (It it = start; it != end; ++it) {
-			++counts[(extract_key(*it) >> bit_shift) & 0xff];
+			key_type k = extract_key(*it);
+			++counts[(k >> bit_shift) & 0xff];
 		}
+
 		size_t total = 0;
 		// convert our counts to starting indexs
 		// IE, if we know we've seen 4 of some value
@@ -222,7 +223,6 @@ namespace sort {
 			}
 			start_end[256] = total;
 		}
-
 		//from skarupke's 2017 video, instead of sorting via the start of the array and
 		//continuously swapping the first element until it's in place
 		//instead we flip the algorithm around from the index's perspective
@@ -240,83 +240,51 @@ namespace sort {
 		// book-keeping we only swap each out of position item once, this guarantees
 		// we avoid memory dependencies on previous swaps! Allowing the cpu to absolutely blitz through
 		// each swap and predict the remainder of the loops well in advance
-		size_t ordered = 0;
-		for (; ordered < 256;) {
-			bool ordered_start = true;
-			for (size_t x = ordered; x < 256; x++) {
-				size_t s = counts[ordered];
-				size_t e = start_end[ordered + 1];
+		size_t sorted_count = 0;
+		do {
+			for (size_t x = 0; x < 256; x++) {
+				size_t s = counts[x];
+				size_t e = start_end[x + 1];
 				// this is so when we loop back around we start past the point we
 				// know the data is sorted, skarupke mention's swapping things around
 				// I'm not convinced that's a good idea, plus this is easy to program anyway
-				bool current_ordered = (s == e);
-				ordered_start = current_ordered && ordered_start;
-				ordered += current_ordered && ordered_start;
+				sorted_count += (e - s);
 				for (; s < e; s++) {
 					It swap_left = start + s;
+					It swap_target;
 					uint8_t key = (extract_key(*swap_left) >> bit_shift) & 0xff;
-
 					size_t  target_idx = counts[key];
-					size_t  start_idx = start_end[key];
-					size_t  end_idx = start_end[key + 1];
+					swap_target = start + target_idx;
 
-					It swap_target = start + target_idx;
-
-					//if (target_idx < end_idx) {
 					swap_branchless_unconditional(*swap_left, *swap_target);
 					counts[key] += 1;
-					//}
-					//if (s >= start)
 				}
 			}
-		}
+		} while (sorted_count < start_end[256]);
 
 		// the recursion step
 		if (bit_shift) {
 			bit_shift = bit_shift >= 8 ? bit_shift - 8 : 0;
-			for (uint32_t i = 0; i < 256; i++) {
-				if (start_end[i] != start_end[i + 1])
-				counting_sort_byte_shift(start + start_end[i], start + start_end[i + 1], extract_key, bit_shift);
+			if (start_end[256]-start_end[0] > 256) {
+				for (uint32_t i = 0; i < 256; i++) {
+					if ((start_end[i + 1] - start_end[i]) > 256)
+						counting_sort_byte_shift(start + start_end[i], start + start_end[i + 1], extract_key, bit_shift);
+					else
+						intro_sort(start + start_end[i], start + start_end[i + 1], [](const auto& lhs, const auto& rhs) {
+							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+						}, start_end[i + 1] - start_end[i]);
+				}
+			} else {
+				intro_sort(start + start_end[0], start + start_end[256], [](const auto& lhs, const auto& rhs) {
+					return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+				}, start_end[256] - start_end[0]);
 			}
 		}
-		#if 0
-		// This is the original algorithm
-		It     begin = start;
-		size_t idx = 0;
-		for (; begin != end;) {
-			uint8_t key = (extract_key(*begin) >> bit_shift) & 0xff;
-			size_t  target_idx = counts[key];
-			size_t  start_idx = start_end[key];
-			size_t  end_idx = start_end[key + 1];
-			if (idx >= start_idx && idx < target_idx) {
-				// the data here is already in place
-				++begin;
-				idx++;
-			}
-			else {
-				// strictly speaking when idx >= start_idx && idx == target_idx
-				// we're technically already sorted...but we'll need to bump the data forward and
-				// ideally swap should become a noop
-				It target = start + target_idx;
-				counts[key] += 1;
-				swap_branchless_unconditional(*begin, *target);
-				// the problem here with this approach is this branch, since we swapped begin
-				// we now have an unknown item here that may or may not belong here...so
-				// we don't iterate forward (skarupke explains that this isn't nearly as bad
-				// as one might imagine)
-			}
-		}
-		#endif
+
 	}
 
 	template<typename It, typename ExtractKey>
-	release_force_inline constexpr void counting_sort_byte(It start, It end, ExtractKey extract_key)
-	{
-		return counting_sort_byte_shift(start, end, extract_key, 0);
-	}
-	#if 0
-	template<typename It, typename ExtractKey>
-	release_force_inline constexpr void counting_sort_short(It start, It end, ExtractKey extract_key)
+	release_force_inline constexpr void counting_sort_byte_shift_dynamic(It start, It end, ExtractKey extract_key)
 	{
 		// using count_type = ::std::iterator_traits<It>::value_type;
 		using key_type = decltype(ExtractKey{}(*std::declval<It>()));
@@ -327,18 +295,46 @@ namespace sort {
 		// index pairs right next to each other
 		size_t start_end[256 + 1];
 
+		key_type mn = ~key_type{ 0 };
+		key_type mx = key_type{ 0 };
+		uint8_t mxs[sizeof(key_type)] = { 0 };
+		uint8_t mns[sizeof(key_type)];
+		//uint32_t partitions = 0;
+		for (uint8_t& mn : mns)
+		mn = ~uint8_t{ 0 };
+
 		for (It it = start; it != end; ++it) {
-			++counts[extract_key(*it) & 0xff];
+			key_type k = extract_key(*it);
+			for (size_t x = 0; x < sizeof(key_type); x++) {
+				uint8_t key_byte = ((k >> (x * 8)) & 0xff);
+				mns[x] = key_byte < mns[x] ? key_byte : mns[x];
+				mxs[x] = key_byte > mxs[x] ? key_byte : mxs[x];
+			}
+			mn = k < mn ? k : mn;
+			mx = k > mx ? k : mx;
 		}
-		size_t total = 0;
+
+		// find the first byte that we can sort off of
+		uint32_t bit_shift = 0;
+		for (size_t x = 1; x < sizeof(key_type); x++) {
+			if (mns[x] != mxs[x])
+			bit_shift = x * 8;
+		}
+
+		for (It it = start; it != end; ++it) {
+			key_type k = extract_key(*it);
+			++counts[(k >> bit_shift) & 0xff];
+		}
 		// convert our counts to starting indexs
 		// IE, if we know we've seen 4 of some value
 		// then the current total is the index these values
 		// would start at and we know the total would increase by 4
 		{
 			size_t idx = 0;
+			size_t total = 0;
 			for (size_t& count : counts) {
 				size_t old_count = count;
+				//partitions += old_count > 0;
 				count = total;
 				start_end[idx] = total;
 				total += old_count;
@@ -346,103 +342,76 @@ namespace sort {
 			}
 			start_end[256] = total;
 		}
+		//from skarupke's 2017 video, instead of sorting via the start of the array and
+		//continuously swapping the first element until it's in place
+		//instead we flip the algorithm around from the index's perspective
+		//NOTE: how this algorithm sorts, we create an array that gives away the end
+		// state of how the array will be sorted! We can use this to a huge advantage!
+		// While "count" is initially used to count how many items belong in each bin
+		// we use it a second time to keep track of where to swap an item into that bin*
+		// This means we effectively have 256 stack local vectors where:
+		// count[key] < start_end[key+1] means we're not done sorting because
+		// everything from start_end[key] -> count[key] is sorted
+		// and count[key] -> start_end[key+1] might not be...
+		//BIG NOTE: Meaning start[key] to count[key] are sorted exactly where they want to be!
+		// so instead of the cpu trampling all over itself we strictly
+		// swap indexs we know are guaranteed to be out of position, so with minimal
+		// book-keeping we only swap each out of position item once, this guarantees
+		// we avoid memory dependencies on previous swaps! Allowing the cpu to absolutely blitz through
+		// each swap and predict the remainder of the loops well in advance
+		size_t sorted_count = 0;
+		do {
+			for (size_t x = 0; x < 256; x++) {
+				size_t s = counts[x];
+				size_t e = start_end[x + 1];
+				// this is so when we loop back around we start past the point we
+				// know the data is sorted, skarupke mention's swapping things around
+				// I'm not convinced that's a good idea, plus this is easy to program anyway
+				sorted_count += (e - s);
+				for (; s < e; s++) {
+					It swap_left = start + s;
+					It swap_target;
+					uint8_t key = (extract_key(*swap_left) >> bit_shift) & 0xff;
+					size_t  target_idx = counts[key];
+					swap_target = start + target_idx;
 
-		It     begin = start;
-		size_t idx = 0;
-		for (; begin != end;) {
-			uint8_t key = extract_key(*begin) & 0xff;
-			size_t  target_idx = counts[key];
-			size_t  start_idx = start_end[key];
-			size_t  end_idx = start_end[key + 1];
-			if (idx >= start_idx && idx < target_idx) {
-				// the data here is already in place
-				++begin;
-				idx++;
+					swap_branchless_unconditional(*swap_left, *swap_target);
+					counts[key] += 1;
+				}
 			}
-			else {
-				// strictly speaking when idx >= start_idx && idx == target_idx
-				// we're technically already sorted...but we'll need to bump the data forward and
-				// ideally swap should become a noop
-				It target = start + target_idx;
-				counts[key] += 1;
-				swap_branchless_unconditional(*begin, *target);
-			}
-		}
+		} while (sorted_count < start_end[256]);
 
-		for (uint32_t i = 0; i < 256; i++) {
-			if (start_end[i] != start_end[i + 1])
-			counting_sort_byte_shift(start + start_end[i], start + start_end[i + 1], extract_key, 8);
+		// the recursion step
+		if (bit_shift) {
+			do {
+				bit_shift = bit_shift >= 8 ? bit_shift - 8 : 0;
+			} while (bit_shift && ((mxs[bit_shift >> 3] - mns[bit_shift>>3]) == 0)); // no point in sorting this level, all keys share the same byte
+			
+			for (uint32_t i = 0; i < 256; i++) {
+				size_t items = (start_end[i + 1] - start_end[i]);
+				if (items > 256) {
+					counting_sort_byte_shift(start + start_end[i], start + start_end[i + 1], extract_key, bit_shift);
+				} else {
+					intro_sort(start + start_end[i], start + start_end[i + 1], [](const auto& lhs, const auto& rhs) {
+						return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+					}, start_end[i + 1] - start_end[i]);
+				}
+			}
 		}
 	}
-	#endif
+
+	template<typename It, typename ExtractKey>
+	release_force_inline constexpr void counting_sort_byte(It start, It end, ExtractKey extract_key)
+	{
+		return counting_sort_byte_shift_flat(start, end, extract_key, 0);
+	}
+
 	template<typename It, typename ExtractKey>
 	release_force_inline constexpr void counting_sort_multibyte(It start, It end, ExtractKey extract_key)
 	{
-		using key_type = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
-		static_assert(std::is_integral<key_type>::value, "extract_key must return an integral type!");
-		//uint32_t bit_shift = sizeof(key_type)-8;//
-		counting_sort_byte_shift(start, end, extract_key, (sizeof(key_type)*8) - 8);
-		#if 0
-		// using count_type = ::std::iterator_traits<It>::value_type;
 		using key_type = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>())) > ;
 		static_assert(std::is_integral<key_type>::value, "extract_key must return an integral type!");
-		uint32_t bit_shift = 0;
-		do {
-			size_t counts[256] = { 0 };
-			// The start of one index is the end of another, we can compress the data into
-			// index pairs right next to each other
-			size_t start_end[256 + 1];
-
-			for (It it = start; it != end; ++it) {
-				++counts[(extract_key(*it) >> bit_shift) & 0xff];
-			}
-			size_t total = 0;
-			// convert our counts to starting indexs
-			// IE, if we know we've seen 4 of some value
-			// then the current total is the index these values
-			// would start at and we know the total would increase by 4
-			{
-				size_t idx = 0;
-				uint16_t bins = 0;
-
-				for (size_t& count : counts) {
-					size_t old_count = count;
-					bins += count > 0;
-					count = total;
-					start_end[idx] = total;
-					total += old_count;
-					idx++;
-				}
-
-				start_end[256] = total;
-
-				if (bins <= 1) {
-					bit_shift += 8;
-					continue;
-				}
-			}
-
-			It     begin = start;
-			size_t idx = 0;
-			for (; begin != end;) {
-				uint8_t key = (extract_key(*begin) >> bit_shift) & 0xff; //extract_key(*begin);
-				size_t  target_idx = counts[key];
-				size_t  start_idx = start_end[key];
-				size_t  end_idx = start_end[key + 1];
-				if (idx >= start_idx && idx < target_idx) {
-					// the data here is already in place
-					++begin;
-					idx++;
-				}
-				else {
-					It target = start + target_idx;
-					counts[key] += 1;
-					swap_branchless_unconditional(*begin, *target); //std::swap(*begin, *target);
-				}
-			}
-			bit_shift += 8;
-		} while (bit_shift < (sizeof(key_type) * 8));
-		#endif
+		counting_sort_byte_shift_dynamic(start, end, extract_key);
 	}
 
 	template<typename It, typename ExtractKey>
@@ -452,52 +421,15 @@ namespace sort {
 		static_assert(std::is_integral<key_type>::value, "extract_key must return an integral type!");
 
 		if constexpr (::std::is_signed<key_type>::value) {
-			// ::std::numeric_limits<key_type>::min();
 			constexpr typename ::std::make_unsigned<key_type>::type min_value = {
 				~(~typename::std::make_unsigned<key_type>::type{0} >> 1)
 			};
-			
-			counting_sort_multibyte(start, end, [](const auto& value) {
-				return ExtractKey{}(value) + min_value;
+			counting_sort_byte_shift_dynamic(start, end, [](const auto& value) {
+				return ExtractKey{}(value)+min_value;
 			});
-			
-			/*
-			counting_sort_byte(start, end, [](const auto& value) { return ((ExtractKey{}(value)+min_value)) & 0xff; });
-			if constexpr (sizeof(key_type) >= 2)
-			counting_sort_byte(start, end, [](const auto& value) { return ((ExtractKey{}(value)+min_value) >> 8) & 0xff; });
-			if constexpr (sizeof(key_type) >= 3)
-			counting_sort_byte(start, end, [](const auto& value) { return ((ExtractKey{}(value)+min_value) >> 16) & 0xff; });
-			if constexpr (sizeof(key_type) >= 4)
-			counting_sort_byte(start, end, [](const auto& value) { return ((ExtractKey{}(value)+min_value) >> 24) & 0xff; });
-			if constexpr (sizeof(key_type) >= 5)
-			counting_sort_byte(start, end, [](const auto& value) { return ((ExtractKey{}(value)+min_value) >> 32) & 0xff; });
-			if constexpr (sizeof(key_type) >= 6)
-			counting_sort_byte(start, end, [](const auto& value) { return ((ExtractKey{}(value)+min_value) >> 40) & 0xff; });
-			if constexpr (sizeof(key_type) >= 7)
-			counting_sort_byte(start, end, [](const auto& value) { return ((ExtractKey{}(value)+min_value) >> 48) & 0xff; });
-			if constexpr (sizeof(key_type) >= 8)
-			counting_sort_byte(start, end, [](const auto& value) { return ((ExtractKey{}(value)+min_value) >> 56) & 0xff; });
-			*/
 		}
 		else {
-			counting_sort_multibyte(start, end, extract_key);
-			/*
-			counting_sort_byte(start, end, [](const auto& value) { return ExtractKey{}(value) & 0xff; });
-			if constexpr (sizeof(key_type) >= 2)
-			counting_sort_byte(start, end, [](const auto& value) { return (ExtractKey{}(value) >> 8) & 0xff; });
-			if constexpr (sizeof(key_type) >= 3)
-			counting_sort_byte(start, end, [](const auto& value) { return (ExtractKey{}(value) >> 16) & 0xff; });
-			if constexpr (sizeof(key_type) >= 4)
-			counting_sort_byte(start, end, [](const auto& value) { return (ExtractKey{}(value) >> 24) & 0xff; });
-			if constexpr (sizeof(key_type) >= 5)
-			counting_sort_byte(start, end, [](const auto& value) { return (ExtractKey{}(value) >> 32) & 0xff; });
-			if constexpr (sizeof(key_type) >= 6)
-			counting_sort_byte(start, end, [](const auto& value) { return (ExtractKey{}(value) >> 40) & 0xff; });
-			if constexpr (sizeof(key_type) >= 7)
-			counting_sort_byte(start, end, [](const auto& value) { return (ExtractKey{}(value) >> 48) & 0xff; });
-			if constexpr (sizeof(key_type) >= 8)
-			counting_sort_byte(start, end, [](const auto& value) { return (ExtractKey{}(value) >> 56) & 0xff; });
-			*/
+			counting_sort_byte_shift_dynamic(start, end, extract_key);
 		}
 	}
 
@@ -525,27 +457,26 @@ namespace sort {
 
 		if constexpr (::std::same_as<key_type, float>::value) {
 			constexpr key_type r = ::std::numeric_limits<key_type>::min();
-			counting_sort_multibyte(start, end, [](const auto& v) {
+			counting_sort_byte_shift(start, end, [](const auto& v) {
 				float value = extract_key(v);
 				uint32_t uv = std::bit_cast<uint32_t>(value);
 				uint32_t sf = uv >> (sizeof(uint32_t) * 8 - 1);
 				uint32_t flip_mask = 0x80000000 | (0xffffffff * sf);
 				return uv ^ flip_mask;
-			});
+			}, (sizeof(key_type) * 8) - 8);
 		}
 		else if constexpr (::std::same_as<key_type, double>::value) {
-			counting_sort_multibyte(start, end, [](const auto& v) {
+			counting_sort_byte_shift(start, end, [](const auto& v) {
 				double value = extract_key(v);
 				uint64_t   uv = ::std::bit_cast<uint64_t>(value);
 				uint64_t   sf = uv >> (sizeof(uint64_t) * 8 - 1);
 				uint32_t   flip_mask = 0x8000000000000000 | (0xffffffffffffffff * sf);
 				return uv ^ flip_mask;
-			});
+			}, (sizeof(key_type) * 8) - 8);
 		}
 		else {
-			static_assert(false, "extract_key must return eaither a float or a double, long double is not supported!");
+			static_assert(false, "extract_key must return either a float or a double, long double is not supported!");
 		}
-		// long double?, long double's 
 	}
 	#endif
 
@@ -642,7 +573,7 @@ namespace sort {
 		}
 	}
 
-	template<class RAIt, class Compare = std::less<>>
+	template<class RAIt, class Compare>
 	constexpr void insertion_sort(RAIt first, RAIt last, Compare comp = Compare{})
 	{
 		size_t dist = last - first;
@@ -747,14 +678,14 @@ namespace sort {
 	{
 		// sort median of three elements to middle
 		if (_Pred(*_Mid, *_First)) {
-			swap_branchless_unconditional(*_Mid, *_First); // intentional ADL
+			swap_branchless_unconditional(*_Mid, *_First); 
 		}
 
 		if (_Pred(*_Last, *_Mid)) {                       // swap middle and last, then test first again
-			swap_branchless_unconditional(*_Last, *_Mid); // intentional ADL
+			swap_branchless_unconditional(*_Last, *_Mid); 
 
 			if (_Pred(*_Mid, *_First)) {
-				swap_branchless_unconditional(*_Mid, *_First); // intentional ADL
+				swap_branchless_unconditional(*_Mid, *_First); 
 			}
 		}
 	}
@@ -817,7 +748,7 @@ namespace sort {
 					break;
 				}
 				else if (_Plast != _Gfirst) {
-					swap_branchless_unconditional(*_Plast, *_Gfirst); // intentional ADL
+					swap_branchless_unconditional(*_Plast, *_Gfirst); 
 					++_Plast;
 				}
 				else {
@@ -834,7 +765,7 @@ namespace sort {
 					break;
 				}
 				else if (--_Pfirst != _Glast_prev) {
-					swap_branchless_unconditional(*_Pfirst, *_Glast_prev); // intentional ADL
+					swap_branchless_unconditional(*_Pfirst, *_Glast_prev); 
 				}
 			}
 
@@ -844,23 +775,23 @@ namespace sort {
 
 			if (_Glast == start) { // no room at bottom, rotate pivot upward
 				if (_Plast != _Gfirst) {
-					swap_branchless_unconditional(*_Pfirst, *_Plast); // intentional ADL
+					swap_branchless_unconditional(*_Pfirst, *_Plast); 
 				}
 
 				++_Plast;
-				swap_branchless_unconditional(*_Pfirst, *_Gfirst); // intentional ADL
+				swap_branchless_unconditional(*_Pfirst, *_Gfirst); 
 				++_Pfirst;
 				++_Gfirst;
 			}
 			else if (_Gfirst == end) { // no room at top, rotate pivot downward
 				if (--_Glast != --_Pfirst) {
-					swap_branchless_unconditional(*_Glast, *_Pfirst); // intentional ADL
+					swap_branchless_unconditional(*_Glast, *_Pfirst); 
 				}
 
-				swap_branchless_unconditional(*_Pfirst, *--_Plast); // intentional ADL
+				swap_branchless_unconditional(*_Pfirst, *--_Plast); 
 			}
 			else {
-				swap_branchless_unconditional(*_Gfirst, *--_Glast); // intentional ADL
+				swap_branchless_unconditional(*_Gfirst, *--_Glast); 
 				++_Gfirst;
 			}
 		}
