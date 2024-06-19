@@ -290,7 +290,7 @@ namespace sort {
 					It start, It end, ExtractKey extract_key, uint32_t bit_shift)
 	{
 		// using count_type = ::std::iterator_traits<It>::value_type;
-		using key_type = decltype(ExtractKey{}(*std::declval<It>()));
+		using key_type = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
 		static_assert(std::is_integral<key_type>::value, "extract_key must return an integral type!");
 
 		size_t counts[256] = {0};
@@ -392,7 +392,7 @@ namespace sort {
 	release_force_inline constexpr void counting_sort_byte_shift_dynamic(It start, It end, ExtractKey extract_key)
 	{
 		// using count_type = ::std::iterator_traits<It>::value_type;
-		using key_type = decltype(ExtractKey{}(*std::declval<It>()));
+		using key_type = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
 		static_assert(std::is_integral<key_type>::value, "extract_key must return an integral type!");
 
 		size_t counts[256] = {0};
@@ -567,7 +567,7 @@ namespace sort {
 	template<typename It, typename ExtractKey>
 	constexpr void counting_sort_floating(It start, It end, ExtractKey extract_key)
 	{
-		using key_type = decltype(ExtractKey{}(*std::declval<It>()));
+		using key_type = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
 		static_assert(std::is_floating_point<key_type>::value, "extract_key must return a floating point type!");
 
 		if constexpr (::std::same_as<key_type, float>::value) {
