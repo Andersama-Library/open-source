@@ -992,7 +992,7 @@ namespace sort {
 				return;
 			}
 
-			if (heapthresh > 0) {
+			if (heapthresh <= 0) {
 				sort::make_heap(first, last, comp);
 				sort::sort_heap(first, last, comp);
 				return;
