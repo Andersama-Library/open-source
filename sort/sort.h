@@ -151,12 +151,20 @@ namespace sort {
 		{
 			return ::std::forward<T>(v);
 		}
+		[[nodiscard]] constexpr const T& operator()(const T& v) const noexcept
+		{
+			return v;
+		}
 	};
 
 	template<> struct identity_less_than<void> {
 		template<class T> [[nodiscard]] constexpr T&& operator()(T&& v) const noexcept
 		{
 			return ::std::forward<T>(v);
+		}
+		template<class T> [[nodiscard]] constexpr const T& operator()(const T& v) const noexcept
+		{
+			return v;
 		}
 	};
 
@@ -165,12 +173,20 @@ namespace sort {
 		{
 			return ::std::forward<T>(v);
 		}
+		[[nodiscard]] constexpr const T& operator()(const T& v) const noexcept
+		{
+			return v;
+		}
 	};
 
 	template<> struct identity_greater_than<void> {
 		template<class T> [[nodiscard]] constexpr T&& operator()(T&& v) const noexcept
 		{
 			return ::std::forward<T>(v);
+		}
+		template<class T> [[nodiscard]] constexpr const T& operator()(const T& v) const noexcept
+		{
+			return v;
 		}
 	};
 
