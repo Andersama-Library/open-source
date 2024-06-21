@@ -19,7 +19,7 @@ For organizational purposes source files related to particular utilties will be 
 
 ## C++ Single Header Files and Libraries
 * [C++ Branch](https://github.com/Andersama-Library/open-source/tree/c%2B%2B) - A collection of some of my personal c++ libraries
-  * [forceinline](https://github.com/Andersama-Library/open-source/tree/c%2B%2B/forceinline) - A header for a macro to force inline functions `ALWAYS_FORCE_INLINE`
+  * [forceinline](https://github.com/Andersama-Library/open-source/tree/c%2B%2B/forceinline) - A header for a macro to force inline functions `always_force_inline`
   * [headers](https://github.com/Andersama-Library/open-source/tree/c%2B%2B/headers) - A set of headers that groups common standard c++ headers together
   * [simple_benchmark](https://github.com/Andersama-Library/open-source/tree/c%2B%2B/simple_benchmark) - A single header for benchmarking, even smaller than nanobench!
   * [stack_vector](https://github.com/Andersama-Library/open-source/tree/c%2B%2B/stack_vector) - A header for a vector which lives on the stack
