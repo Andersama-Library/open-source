@@ -86,3 +86,8 @@ int main() {
 	return 0;
 }
 ```
+
+Performance
+-----------
+
+![sort_performance](https://github.com/Andersama-Library/open-source/assets/25020235/e90bb6f6-1c5c-4df3-bf86-ce44c9c643c7)
