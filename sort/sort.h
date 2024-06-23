@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <array>
 #include <tuple>
 #include <type_traits>
 #include <functional>
