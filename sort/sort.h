@@ -891,266 +891,298 @@ namespace sort {
 	template<typename It, typename ExtractKey, size_t Idx, size_t... Idxs>
 	constexpr void counting_sort_get_impl(It start, It end, ExtractKey extract_key, std::index_sequence<Idx, Idxs...>)
 	{
-		using key_type          = sort::remove_cvref_t<decltype(::std::get<Idx>(ExtractKey{}(*std::declval<It>())))>;
-		using unsigned_key_type = typename ::std::make_unsigned<key_type>::type;
-		using index_type        = size_t;
-		// static_assert(std::is_integral<key_type>::value,
-		//				"::std::get<Idx>(extract_key(*it)) must return an integral type!");
-		constexpr size_t initial_count_indexs      = 256 * sizeof(key_type);
-		constexpr size_t required_start_end_indexs = 257 * sizeof(key_type);
-		constexpr size_t count_indexs              = 256;
-		constexpr size_t start_end_indexs          = 257;
+		using key_type = sort::remove_cvref_t<decltype(::std::get<Idx>(ExtractKey{}(*std::declval<It>())))>;
+		if constexpr (is_tuple<key_type>::value) {
+			return counting_sort_get_impl(
+							start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
+							std::make_index_sequence<std::tuple_size<key_type>::value>{});
+		} else {
+			using unsigned_key_type = typename ::std::make_unsigned<key_type>::type;
+			using index_type        = size_t;
+			static_assert(std::is_integral<key_type>::value
+#if defined(cplusplus_version_20)
+											|| std::is_same<key_type, float>::value ||
+											std::is_same<key_type, double>::value
+#endif
+							,
+							"::std::get<Idx>(extract_key(*it)) must return a key type!");
+			constexpr size_t initial_count_indexs      = 256 * sizeof(key_type);
+			constexpr size_t required_start_end_indexs = 257 * sizeof(key_type);
+			constexpr size_t count_indexs              = 256;
+			constexpr size_t start_end_indexs          = 257;
 
-		// The start of one index is the end of another, we can compress the data into
-		// index pairs right next to each other
-		std::array<index_type, required_start_end_indexs> stack_data = {};
-		std::array<index_type, count_indexs>              counts; // we can reuse these for each recursion depth
+			// The start of one index is the end of another, we can compress the data into
+			// index pairs right next to each other
+			std::array<index_type, required_start_end_indexs> stack_data = {};
+			std::array<index_type, count_indexs>              counts; // we can reuse these for each recursion depth
 
-		std::array<uint16_t, sizeof(key_type)> progress = {};
-		std::array<It, sizeof(key_type)>       its;
+			std::array<uint16_t, sizeof(key_type)> progress = {};
+			std::array<It, sizeof(key_type)>       its;
 
-		unsigned_key_type mn                    = ~unsigned_key_type{0};
-		unsigned_key_type mx                    = unsigned_key_type{0};
-		uint8_t           mxs[sizeof(key_type)] = {0};
-		uint8_t           mns[sizeof(key_type)];
+			unsigned_key_type mn                    = ~unsigned_key_type{0};
+			unsigned_key_type mx                    = unsigned_key_type{0};
+			uint8_t           mxs[sizeof(key_type)] = {0};
+			uint8_t           mns[sizeof(key_type)];
 
-		for (uint8_t& mn : mns)
-			mn = ~uint8_t{0};
+			for (uint8_t& mn : mns)
+				mn = ~uint8_t{0};
 
-		for (It it = start; it != end; ++it) {
-			key_type          k  = ::std::get<Idx>(extract_key(*it));
-			unsigned_key_type uk = sort::treat_as_unsigned(k);
+			for (It it = start; it != end; ++it) {
+				key_type          k  = ::std::get<Idx>(extract_key(*it));
+				unsigned_key_type uk = sort::treat_as_unsigned(k);
 
-			mn = uk < mn ? uk : mn;
-			mx = uk > mx ? uk : mx;
+				mn = uk < mn ? uk : mn;
+				mx = uk > mx ? uk : mx;
 
-			for (size_t x = 0; x < sizeof(key_type); x++) {
-				uint8_t key_byte = ((uk >> (x * 8)) & 0xff);
-				mns[x]           = key_byte < mns[x] ? key_byte : mns[x];
-				mxs[x]           = key_byte > mxs[x] ? key_byte : mxs[x];
+				for (size_t x = 0; x < sizeof(key_type); x++) {
+					uint8_t key_byte = ((uk >> (x * 8)) & 0xff);
+					mns[x]           = key_byte < mns[x] ? key_byte : mns[x];
+					mxs[x]           = key_byte > mxs[x] ? key_byte : mxs[x];
 
-				++stack_data[count_indexs * x + key_byte];
+					++stack_data[count_indexs * x + key_byte];
+				}
 			}
-		}
 
-		// array of all the same values
-		{
-			unsigned_key_type diff = mx - mn;
-			switch (diff) {
-			case 1:
-				sort::partition(start, end, [&mx](const auto& v) {
+			// array of all the same values
+			{
+				unsigned_key_type diff = mx - mn;
+				switch (diff) {
+				case 1: {
+					auto it = sort::partition(start, end, [&mx](const auto& v) {
+						return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
+					});
+					if constexpr ((sizeof...(Idxs))) {
+						counting_sort_get_impl(start, it, extract_key, std::index_sequence<Idxs...>{});
+						return counting_sort_get_impl(it, end, extract_key, std::index_sequence<Idxs...>{});
+					} else {
+						[[fallthrough]];
+					}
+				}
+				case 0:
+					if constexpr ((sizeof...(Idxs))) {
+						return counting_sort_get_impl(start, end, extract_key, std::index_sequence<Idxs...>{});
+					} else {
+						return;
+					}
+				default:
+					break;
+				}
+			}
+
+			counting_sort_bytes next{};
+			uint8_t             depth = 0;
+			// find the first byte that we can sort off of
+			/// uint32_t bytes_needing_sorting = 0;
+			for (uint32_t x = sizeof(key_type); --x < sizeof(key_type);) {
+				bool bit_range = mns[x] != mxs[x];
+				next.idxs |= (x << (8 * next.bytes)) * bit_range;
+				next.bytes += bit_range;
+			}
+
+			its[0]              = start;
+			uint32_t partitions = 0;
+			{ // convert counts to prefix sum
+				size_t   idx          = 0;
+				size_t   total        = 0;
+				uint16_t current_byte = (next.idxs >> (depth * 8)) & 0xff;
+				for (; idx < 256;) {
+					size_t count = stack_data[(current_byte * count_indexs) + idx];
+
+					size_t old_count = count;
+					partitions += old_count > 0;
+					counts[idx]     = total;
+					stack_data[idx] = total;
+					total += old_count;
+					idx++;
+				}
+				stack_data[256] = total;
+			}
+
+			switch (partitions) {
+			case 2: {
+				auto it = sort::partition(start, end, [&mx](const auto& v) {
 					return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
 				});
+				if constexpr ((sizeof...(Idxs))) {
+					counting_sort_get_impl(start, it, extract_key, std::index_sequence<Idxs...>{});
+					return counting_sort_get_impl(it, end, extract_key, std::index_sequence<Idxs...>{});
+				} else {
+					[[fallthrough]];
+				}
+			}
+			case 1:
+				[[fallthrough]];
 			case 0:
-				return;
+				if constexpr ((sizeof...(Idxs))) {
+					return counting_sort_get_impl(start, end, extract_key, std::index_sequence<Idxs...>{});
+				} else {
+					return;
+				}
 			default:
 				break;
 			}
-		}
 
-		counting_sort_bytes next{};
-		uint8_t             depth = 0;
-		// find the first byte that we can sort off of
-		/// uint32_t bytes_needing_sorting = 0;
-		for (uint32_t x = sizeof(key_type); --x < sizeof(key_type);) {
-			bool bit_range = mns[x] != mxs[x];
-			next.idxs |= (x << (8 * next.bytes)) * bit_range;
-			next.bytes += bit_range;
-		}
+			auto start_it = its[depth];
 
-		its[0]              = start;
-		uint32_t partitions = 0;
-		{ // convert counts to prefix sum
-			size_t   idx          = 0;
-			size_t   total        = 0;
-			uint16_t current_byte = (next.idxs >> (depth * 8)) & 0xff;
-			for (; idx < 256;) {
-				size_t count = stack_data[(current_byte * count_indexs) + idx];
+			uint32_t bit_shift    = ((next.idxs >> (depth * 8)) & 0xff) * 8;
+			size_t   sorted_count = 0;
+			do {
+				for (size_t x = 0; x < 256; x++) {
+					size_t s = counts[x];                                      // counts[depth][x];
+					size_t e = stack_data[(depth * start_end_indexs) + x + 1]; // start_end[depth][x + 1];
+					// this is so when we loop back around we start past the point we
+					// know the data is sorted, skarupke mention's swapping things around
+					// I'm not convinced that's a good idea, plus this is easy to program anyway
+					sorted_count += (e - s);
+					for (; s < e; s++) {
+						It      swap_left = start_it + s;
+						It      swap_target;
+						uint8_t key = (sort::treat_as_unsigned(::std::get<Idx>(extract_key(*swap_left))) >> bit_shift) &
+									  0xff;
+						size_t target_idx = counts[key];
+						swap_target       = start_it + target_idx;
 
-				size_t old_count = count;
-				partitions += old_count > 0;
-				counts[idx]     = total;
-				stack_data[idx] = total;
-				total += old_count;
-				idx++;
-			}
-			stack_data[256] = total;
-		}
-
-		switch (partitions) {
-		case 2:
-			sort::partition(start, end, [&mx](const auto& v) {
-				return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
-			});
-			[[fallthrough]];
-		case 1:
-			[[fallthrough]];
-		case 0:
-			return;
-		default:
-			break;
-		}
-
-		auto start_it = its[depth];
-
-		uint32_t bit_shift    = ((next.idxs >> (depth * 8)) & 0xff) * 8;
-		size_t   sorted_count = 0;
-		do {
-			for (size_t x = 0; x < 256; x++) {
-				size_t s = counts[x];                                      // counts[depth][x];
-				size_t e = stack_data[(depth * start_end_indexs) + x + 1]; // start_end[depth][x + 1];
-				// this is so when we loop back around we start past the point we
-				// know the data is sorted, skarupke mention's swapping things around
-				// I'm not convinced that's a good idea, plus this is easy to program anyway
-				sorted_count += (e - s);
-				for (; s < e; s++) {
-					It      swap_left = start_it + s;
-					It      swap_target;
-					uint8_t key = (sort::treat_as_unsigned(::std::get<Idx>(extract_key(*swap_left))) >> bit_shift) &
-								  0xff;
-					size_t target_idx = counts[key];
-					swap_target       = start_it + target_idx;
-
-					sort::swap_branchless_unconditional(*swap_left, *swap_target);
-					counts[key] += 1;
+						sort::swap_branchless_unconditional(*swap_left, *swap_target);
+						counts[key] += 1;
+					}
 				}
-			}
-		} while (sorted_count < stack_data[(depth * start_end_indexs) + 256]);
-		// no recursion needed, every item had a dedicated location
-		if (partitions == (end - start))
-			return;
-		if constexpr ((sizeof...(Idxs)) == 0) {
-			if (next.bytes <= 1) // we have other parts of the key to extract
+			} while (sorted_count < stack_data[(depth * start_end_indexs) + 256]);
+			// no recursion needed, every item had a dedicated location
+			if (partitions == (end - start))
 				return;
-		}
+			if constexpr ((sizeof...(Idxs)) == 0) {
+				if (next.bytes <= 1) // we have other parts of the key to extract
+					return;
+			}
 
-		for (;;) {
-			//  the recursion step
-			for (; progress[depth] < 256; ++progress[depth]) {
-				uint16_t i            = progress[depth];
-				size_t   start_offset = stack_data[(depth * start_end_indexs) + i];
-				size_t   end_offset   = stack_data[(depth * start_end_indexs) + i + 1];
-				size_t   items        = end_offset - start_offset;
-				// skip where we have 0 items to process
-				if (items <= insertion_sort_threshold) {
-					// this should "bubble" up, marking this region as definitely sorted
-					sort::insertion_sort(start_it + start_offset, start_it + end_offset,
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-				} else if (items <= intro_sort_threshold) {
-					// this should "bubble" up, marking this region as definitely sorted
-					sort::make_heap(start_it + start_offset, start_it + end_offset,
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-					sort::sort_heap(start_it + start_offset, start_it + end_offset,
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-				} else {
-					uint16_t next_depth = depth + 1;
-					if constexpr (sizeof...(Idxs)) {
-						if (next_depth >= next.bytes) {
-							// go one key deeper
-							counting_sort_get_impl(start_it + start_offset, start_it + end_offset, extract_key,
-											std::index_sequence<Idxs...>{});
-							continue;
-						}
-					}
-
-					mn = ~key_type{0};
-					mx = key_type{0};
-					// do normal count
-
-					It end_it = start_it + end_offset;
-					// setup to process the next depth
-					for (size_t& count : counts)
-						count = 0;
-
-					uint32_t bit_shift = ((next.idxs >> (next_depth * 8)) & 0xff) * 8;
-					for (It it = start_it + start_offset; it != end_it; ++it) {
-						unsigned_key_type k = sort::treat_as_unsigned(::std::get<Idx>(extract_key(*it)));
-
-						mn               = k < mn ? k : mn;
-						mx               = k > mx ? k : mx;
-						uint8_t key_byte = k >> bit_shift;
-						++counts[key_byte];
-					}
-
-					unsigned_key_type diff = mx - mn;
-					switch (diff) {
-					case 1:
-						sort::partition(start_it + start_offset, end_it,
-										[&mx](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)) < mx; });
-						[[fallthrough]];
-					case 0:
-						continue;
-					default:
-						break;
-					}
-
-					uint32_t partitions = 0;
-					{ // convert counts to prefix sum
-						size_t idx   = 0;
-						size_t total = 0;
-						for (size_t& count : counts) {
-							size_t old_count = count;
-							partitions += old_count > 0;
-							count                                             = total;
-							stack_data[(next_depth * start_end_indexs) + idx] = total;
-							// start_end[next_depth][idx] = total;
-							total += old_count;
-							idx++;
-						}
-						stack_data[(next_depth * start_end_indexs) + 256] = total;
-						// start_end[next_depth][256] = total;
-					}
-
-					its[next_depth] = start_it + start_offset;
-
-					start_it = its[next_depth];
-
-					size_t sorted_count = 0;
-					do {
-						for (size_t x = 0; x < 256; x++) {
-							size_t s = counts[x];
-							size_t e = stack_data[(next_depth * start_end_indexs) + x + 1];
-							// this is so when we loop back around we start past the point we
-							// know the data is sorted, skarupke mention's swapping things around
-							// I'm not convinced that's a good idea, plus this is easy to program anyway
-							sorted_count += (e - s);
-							for (; s < e; s++) {
-								It      swap_left = start_it + s;
-								It      swap_target;
-								uint8_t key = (sort::treat_as_unsigned(::std::get<Idx>(extract_key(*swap_left))) >>
-															  bit_shift) &
-											  0xff;
-								size_t  target_idx = counts[key];
-								swap_target        = start_it + target_idx;
-
-								sort::swap_branchless_unconditional(*swap_left, *swap_target);
-								counts[key] += 1;
+			for (;;) {
+				//  the recursion step
+				for (; progress[depth] < 256; ++progress[depth]) {
+					uint16_t i            = progress[depth];
+					size_t   start_offset = stack_data[(depth * start_end_indexs) + i];
+					size_t   end_offset   = stack_data[(depth * start_end_indexs) + i + 1];
+					size_t   items        = end_offset - start_offset;
+					// skip where we have 0 items to process
+					if (items <= insertion_sort_threshold) {
+						// this should "bubble" up, marking this region as definitely sorted
+						sort::insertion_sort(start_it + start_offset, start_it + end_offset,
+										[](const auto& lhs, const auto& rhs) {
+											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										});
+					} else if (items <= intro_sort_threshold) {
+						// this should "bubble" up, marking this region as definitely sorted
+						sort::make_heap(start_it + start_offset, start_it + end_offset,
+										[](const auto& lhs, const auto& rhs) {
+											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										});
+						sort::sort_heap(start_it + start_offset, start_it + end_offset,
+										[](const auto& lhs, const auto& rhs) {
+											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										});
+					} else {
+						uint16_t next_depth = depth + 1;
+						if constexpr (sizeof...(Idxs)) {
+							if (next_depth >= next.bytes) {
+								// go one key deeper
+								counting_sort_get_impl(start_it + start_offset, start_it + end_offset, extract_key,
+												std::index_sequence<Idxs...>{});
+								continue;
 							}
 						}
-					} while (sorted_count < stack_data[(next_depth * start_end_indexs) + 256]); // start_end[256]
-					// we don't need to recurse if the # of items matches
-					if constexpr ((sizeof...(Idxs)) == 0) {
-						if (next_depth >= (next.bytes - 1))
+
+						mn = ~key_type{0};
+						mx = key_type{0};
+						// do normal count
+
+						It end_it = start_it + end_offset;
+						// setup to process the next depth
+						for (size_t& count : counts)
+							count = 0;
+
+						uint32_t bit_shift = ((next.idxs >> (next_depth * 8)) & 0xff) * 8;
+						for (It it = start_it + start_offset; it != end_it; ++it) {
+							unsigned_key_type k = sort::treat_as_unsigned(::std::get<Idx>(extract_key(*it)));
+
+							mn               = k < mn ? k : mn;
+							mx               = k > mx ? k : mx;
+							uint8_t key_byte = k >> bit_shift;
+							++counts[key_byte];
+						}
+
+						unsigned_key_type diff = mx - mn;
+						switch (diff) {
+						case 1:
+							sort::partition(start_it + start_offset, end_it,
+											[&mx](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)) < mx; });
+							[[fallthrough]];
+						case 0:
 							continue;
+						default:
+							break;
+						}
+
+						uint32_t partitions = 0;
+						{ // convert counts to prefix sum
+							size_t idx   = 0;
+							size_t total = 0;
+							for (size_t& count : counts) {
+								size_t old_count = count;
+								partitions += old_count > 0;
+								count                                             = total;
+								stack_data[(next_depth * start_end_indexs) + idx] = total;
+								// start_end[next_depth][idx] = total;
+								total += old_count;
+								idx++;
+							}
+							stack_data[(next_depth * start_end_indexs) + 256] = total;
+							// start_end[next_depth][256] = total;
+						}
+
+						its[next_depth] = start_it + start_offset;
+
+						start_it = its[next_depth];
+
+						size_t sorted_count = 0;
+						do {
+							for (size_t x = 0; x < 256; x++) {
+								size_t s = counts[x];
+								size_t e = stack_data[(next_depth * start_end_indexs) + x + 1];
+								// this is so when we loop back around we start past the point we
+								// know the data is sorted, skarupke mention's swapping things around
+								// I'm not convinced that's a good idea, plus this is easy to program anyway
+								sorted_count += (e - s);
+								for (; s < e; s++) {
+									It      swap_left = start_it + s;
+									It      swap_target;
+									uint8_t key = (sort::treat_as_unsigned(::std::get<Idx>(extract_key(*swap_left))) >>
+																  bit_shift) &
+												  0xff;
+									size_t target_idx = counts[key];
+									swap_target       = start_it + target_idx;
+
+									sort::swap_branchless_unconditional(*swap_left, *swap_target);
+									counts[key] += 1;
+								}
+							}
+						} while (sorted_count < stack_data[(next_depth * start_end_indexs) + 256]); // start_end[256]
+						// we don't need to recurse if the # of items matches
+						if constexpr ((sizeof...(Idxs)) == 0) {
+							if (next_depth >= (next.bytes - 1))
+								continue;
+						}
+						if (partitions == items)
+							continue;
+						progress[next_depth] = 0;
+						break; // we'll go deeper
 					}
-					if (partitions == items)
-						continue;
-					progress[next_depth] = 0;
-					break; // we'll go deeper
 				}
+
+				if (depth == 0 && progress[0] >= 256) //
+					break;
+				progress[depth] += 1;
+
+				depth += (progress[depth] < 256) ? -1 : 1;
 			}
-
-			if (depth == 0 && progress[0] >= 256) //
-				break;
-			progress[depth] += 1;
-
-			depth += (progress[depth] < 256) ? -1 : 1;
 		}
 	}
 
