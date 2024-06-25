@@ -196,7 +196,6 @@ namespace sort {
 
 	template<class It> [[nodiscard]] constexpr decltype(auto) get_unwrapped(It&& it)
 	{
-		bool convertible = is_pointer_convertible_iterator<It>::value;
 		if constexpr (::std::is_pointer_v<::std::decay_t<It>>) { // special-case pointers and arrays
 			return it + 0;
 		} else if constexpr (is_pointer_convertible_iterator<It>::value) {
@@ -624,7 +623,6 @@ namespace sort {
 		using key_type   = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
 		using index_type = size_t;
 		static_assert(std::is_integral<key_type>::value, "extract_key must return an integral type!");
-		constexpr size_t initial_count_indexs      = 256 * sizeof(key_type);
 		constexpr size_t required_start_end_indexs = 257 * sizeof(key_type);
 		constexpr size_t count_indexs              = 256;
 		constexpr size_t start_end_indexs          = 257;
@@ -865,7 +863,7 @@ namespace sort {
 				uint32_t sf        = uv >> (sizeof(uint32_t) * 8 - 1);
 				uint32_t flip_mask = 0x80000000 | (0xffffffff * sf);
 				return uv ^ flip_mask;
-			} else if constexpr  (::std::is_same<T, double>::value) {
+			} else if constexpr (::std::is_same<T, double>::value) {
 				uint64_t uv        = ::std::bit_cast<uint64_t>(v);
 				uint64_t sf        = uv >> (sizeof(uint64_t) * 8 - 1);
 				uint32_t flip_mask = 0x8000000000000000 | (0xffffffffffffffff * sf);
@@ -906,7 +904,6 @@ namespace sort {
 #endif
 							,
 							"::std::get<Idx>(extract_key(*it)) must return a key type!");
-			constexpr size_t initial_count_indexs      = 256 * sizeof(key_type);
 			constexpr size_t required_start_end_indexs = 257 * sizeof(key_type);
 			constexpr size_t count_indexs              = 256;
 			constexpr size_t start_end_indexs          = 257;
