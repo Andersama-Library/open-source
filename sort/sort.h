@@ -420,7 +420,7 @@ namespace sort {
 			return first;
 
 		for (auto i = ++f; i != last; ++i) {
-			if (!(extract_key(*i) < mn)) { //! p(*i)
+			if (mn < extract_key(*i)) {
 				sort::iter_swap(i, first);
 				++first;
 			}
@@ -2186,7 +2186,7 @@ namespace sort {
 			}
 		}
 	}
-	
+
 	template<typename It, typename ExtractKey, size_t Idx, size_t... Idxs>
 	constexpr void counting_sort_get_impl(It start, It end, ExtractKey extract_key, std::index_sequence<Idx, Idxs...>)
 	{
