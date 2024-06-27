@@ -1354,8 +1354,8 @@ namespace sort {
 			using max_key_type = decltype(sort::treat_as_unsigned_rshifted(std::declval<key_type>(), 0));
 #endif
 
-			max_key_type mx       = max_key_type{1};
-			auto split = sort::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
+			max_key_type mx    = max_key_type{1};
+			auto         split = sort::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 			if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 				if constexpr (sizeof...(Idxs)) {
 					counting_sort_get_impl_recursive(start, split, extract_key, std::index_sequence<Idxs...>{},
@@ -2287,11 +2287,21 @@ namespace sort {
 		for (; i != last; ++i) {
 			auto j = i;
 			for (; j != first;) {
-				auto& rhs = *j;
-				auto& lhs = *(--j);
-				if (!comp(rhs, lhs))
-					break;
-				sort::swap_branchless_unconditional(rhs, lhs);
+				if constexpr (std::is_reference<decltype(*j)>::value) {
+					auto& rhs = *j;
+					auto& lhs = *(--j);
+					if (!comp(rhs, lhs))
+						break;
+					sort::swap_branchless_unconditional(rhs, lhs);
+				} else {
+					auto r   = j;
+					auto rhs = *j;
+					auto lhs = *(--j);
+					auto l   = j;
+					if (!comp(rhs, lhs))
+						break;
+					sort::iter_swap(r, l);
+				}
 			}
 		}
 	}
@@ -2390,14 +2400,17 @@ namespace sort {
 	{
 		// sort median of three elements to middle
 		if (_Pred(*_Mid, *_First)) {
-			sort::swap_branchless_unconditional(*_Mid, *_First);
+			sort::iter_swap(_Mid, _First);
+			//sort::swap_branchless_unconditional(*_Mid, *_First);
 		}
 
 		if (_Pred(*_Last, *_Mid)) { // swap middle and last, then test first again
-			sort::swap_branchless_unconditional(*_Last, *_Mid);
+			sort::iter_swap(_Last, _Mid);
+			//sort::swap_branchless_unconditional(*_Last, *_Mid);
 
 			if (_Pred(*_Mid, *_First)) {
-				sort::swap_branchless_unconditional(*_Mid, *_First);
+				sort::iter_swap(_Mid, _First);
+				//sort::swap_branchless_unconditional(*_Mid, *_First);
 			}
 		}
 	}
@@ -2448,7 +2461,8 @@ namespace sort {
 				} else if (predicate(*_Gfirst, *_Pfirst)) {
 					break;
 				} else if (_Plast != _Gfirst) {
-					sort::swap_branchless_unconditional(*_Plast, *_Gfirst);
+					// ort::swap_branchless_unconditional(*_Plast, *_Gfirst);
+					sort::iter_swap(_Plast, _Gfirst);
 					++_Plast;
 				} else {
 					++_Plast;
@@ -2462,7 +2476,8 @@ namespace sort {
 				} else if (predicate(*_Pfirst, *_Glast_prev)) {
 					break;
 				} else if (--_Pfirst != _Glast_prev) {
-					sort::swap_branchless_unconditional(*_Pfirst, *_Glast_prev);
+					// sort::swap_branchless_unconditional(*_Pfirst, *_Glast_prev);
+					sort::iter_swap(_Pfirst, _Glast_prev);
 				}
 			}
 
@@ -2472,21 +2487,26 @@ namespace sort {
 
 			if (_Glast == start) { // no room at bottom, rotate pivot upward
 				if (_Plast != _Gfirst) {
-					sort::swap_branchless_unconditional(*_Pfirst, *_Plast);
+					// sort::swap_branchless_unconditional(*_Pfirst, *_Plast);
+					sort::iter_swap(_Pfirst, _Plast);
 				}
 
 				++_Plast;
-				sort::swap_branchless_unconditional(*_Pfirst, *_Gfirst);
+				// sort::swap_branchless_unconditional(*_Pfirst, *_Gfirst);
+				sort::iter_swap(_Pfirst, _Gfirst);
 				++_Pfirst;
 				++_Gfirst;
 			} else if (_Gfirst == end) { // no room at top, rotate pivot downward
 				if (--_Glast != --_Pfirst) {
-					sort::swap_branchless_unconditional(*_Glast, *_Pfirst);
+					// sort::swap_branchless_unconditional(*_Glast, *_Pfirst);
+					sort::iter_swap(_Glast, _Pfirst);
 				}
 
-				sort::swap_branchless_unconditional(*_Pfirst, *--_Plast);
+				// sort::swap_branchless_unconditional(*_Pfirst, *--_Plast);
+				sort::iter_swap(_Pfirst, --_Plast);
 			} else {
-				sort::swap_branchless_unconditional(*_Gfirst, *--_Glast);
+				// sort::swap_branchless_unconditional(*_Gfirst, *--_Glast);
+				sort::iter_swap(_Gfirst, --_Glast);
 				++_Gfirst;
 			}
 		}
