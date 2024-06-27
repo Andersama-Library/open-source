@@ -376,7 +376,7 @@ namespace sort {
 	}
 
 	template<class ForwardIt, class UnaryPred>
-	constexpr ForwardIt reversed_partition(ForwardIt first, ForwardIt last, UnaryPred p)
+	constexpr ForwardIt reversed_partition(ForwardIt first, const ForwardIt last, UnaryPred p)
 	{
 		for (; first != last; ++first) {
 			if (p(*first))
@@ -387,41 +387,6 @@ namespace sort {
 		auto f = first;
 		for (auto i = ++f; i != last; ++i) {
 			if (!p(*i)) {
-				sort::iter_swap(i, first);
-				++first;
-			}
-		}
-
-		return first;
-	}
-
-	template<class ForwardIt, class ExtractKey>
-	constexpr ForwardIt reversed_partition_singlebit(ForwardIt first, ForwardIt last, ExtractKey extract_key)
-	{
-		if (first == last)
-			return first;
-
-		auto f  = first;
-		auto mn = extract_key(*first);
-
-		++first;
-		for (; first != last; ++first) {
-			auto key = extract_key(*first);
-			if (key != mn) {
-				if (key < mn) {
-					mn = key;
-				} else {
-					f = first;
-				}
-				break;
-			}
-		}
-
-		if (first == last)
-			return first;
-
-		for (auto i = ++f; i != last; ++i) {
-			if (mn < extract_key(*i)) {
 				sort::iter_swap(i, first);
 				++first;
 			}
@@ -891,7 +856,8 @@ namespace sort {
 #endif
 #endif
 		) {
-			sort::reversed_partition_singlebit(start, end, extract_key);
+			max_key_type mx = max_key_type{1};
+			sort::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 		} else if constexpr (true) {
 			// constexpr size_t initial_count_indexs      = 256 * sizeof(key_type);
 			constexpr size_t required_start_end_indexs = 257 * sizeof(key_type);
@@ -1377,7 +1343,19 @@ namespace sort {
 #endif
 #endif
 		) {
-			auto split = sort::reversed_partition_singlebit(start, end, extract_key);
+#if defined __has_include
+#if __has_include(<bitset>)
+			using max_key_type = typename std::conditional<is_bitset<key_type>::value, key_type,
+							decltype(sort::treat_as_unsigned_rshifted(std::declval<key_type>(), 0))>::type;
+#else
+			using max_key_type = decltype(sort::treat_as_unsigned_rshifted(std::declval<key_type>(), 0));
+#endif
+#else
+			using max_key_type = decltype(sort::treat_as_unsigned_rshifted(std::declval<key_type>(), 0));
+#endif
+
+			max_key_type mx       = max_key_type{1};
+			auto split = sort::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 			if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 				if constexpr (sizeof...(Idxs)) {
 					counting_sort_get_impl_recursive(start, split, extract_key, std::index_sequence<Idxs...>{},
@@ -2232,7 +2210,7 @@ namespace sort {
 			sort::counting_sort_byte_shift_flat(f, l, extract_key);
 #endif
 #endif
-		} else if constexpr (::std::is_same<key_type, bool>::value) {
+		} else if constexpr (::std::is_same<key_type, bool>::value || ::std::is_same<key_type, const bool&>::value) {
 			// partition puts things that return true first...but counting sort should treat this as a value so...we'll
 			// flip the extract function to keep the semantics the same as expected
 			auto f = get_unwrapped(start);
@@ -2319,7 +2297,7 @@ namespace sort {
 				auto& lhs = *(--j);
 				if (!comp(rhs, lhs))
 					break;
-				swap_branchless_unconditional(rhs, lhs);
+				sort::swap_branchless_unconditional(rhs, lhs);
 			}
 		}
 	}
