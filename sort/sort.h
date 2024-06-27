@@ -2196,16 +2196,51 @@ namespace sort {
 	{
 		using key_type = sort::remove_cvref_t<decltype(ExtractKey{}(::std::move(*std::declval<It>())))>;
 
+		auto f = get_unwrapped(start);
+		auto l = get_unwrapped(end);
+		if constexpr (std::is_same<typename ::std::iterator_traits<It>::iterator_category,
+									  ::std::random_access_iterator_tag>::value) {
+			auto item_count = l - f;
+			if (item_count <= insertion_sort_threshold) {
+				if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
+								::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+					return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) { return lhs < rhs; });
+				} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+									 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+					return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) { return lhs > rhs; });
+				} else {
+					return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) {
+						return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+					});
+				}
+			}
+
+			if (item_count <= intro_sort_threshold) {
+				if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
+								::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+					sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs < rhs; });
+					return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs < rhs; });
+				} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+									 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+					sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs > rhs; });
+					return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs > rhs; });
+				} else {
+					sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) {
+						return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+					});
+					return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) {
+						return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+					});
+				}
+			}
+		}
+
 		if constexpr (is_tuple<key_type>::value) {
-			auto f = get_unwrapped(start);
-			auto l = get_unwrapped(end);
 			sort::counting_sort_get_impl_recursive(f, l, extract_key,
 							std::make_index_sequence<std::tuple_size<key_type>::value>{}, parameter_list<>{});
 #if defined __has_include
 #if __has_include(<bitset>)
 		} else if constexpr (is_bitset<key_type>::value) {
-			auto f = get_unwrapped(start);
-			auto l = get_unwrapped(end);
 
 			sort::counting_sort_byte_shift_flat(f, l, extract_key);
 #endif
@@ -2213,49 +2248,8 @@ namespace sort {
 		} else if constexpr (::std::is_same<key_type, bool>::value || ::std::is_same<key_type, const bool&>::value) {
 			// partition puts things that return true first...but counting sort should treat this as a value so...we'll
 			// flip the extract function to keep the semantics the same as expected
-			auto f = get_unwrapped(start);
-			auto l = get_unwrapped(end);
 			sort::partition(f, l, [](const auto& value) { return !ExtractKey{}(value); });
 		} else if constexpr (::std::is_integral<key_type>::value) {
-			auto f = get_unwrapped(start);
-			auto l = get_unwrapped(end);
-			if constexpr (std::is_same<typename ::std::iterator_traits<It>::iterator_category,
-										  ::std::random_access_iterator_tag>::value) {
-				auto item_count = l - f;
-				if (item_count <= insertion_sort_threshold) {
-					if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
-									::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
-						return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) { return lhs < rhs; });
-					} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-										 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
-						return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) { return lhs > rhs; });
-					} else {
-						return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) {
-							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-						});
-					}
-				}
-
-				if (item_count <= intro_sort_threshold) {
-					if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
-									::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
-						sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs < rhs; });
-						return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs < rhs; });
-					} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-										 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
-						sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs > rhs; });
-						return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs > rhs; });
-					} else {
-						sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) {
-							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-						});
-						return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) {
-							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-						});
-					}
-				}
-			}
-
 			if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
 							::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
 				if constexpr (::std::is_signed<key_type>::value) {
