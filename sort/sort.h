@@ -358,14 +358,15 @@ namespace sort {
 	template<class ForwardIt, class UnaryPred>
 	constexpr ForwardIt partition(ForwardIt first, ForwardIt last, UnaryPred p)
 	{
-		for (; first != last; ++first) {
+		for (;;) {
+			if (first == last)
+				return first;
 			if (!p(*first))
 				break;
+			++first;
 		}
-		if (first == last)
-			return first;
-		auto f = first;
-		for (auto i = ++f; i != last; ++i) {
+
+		for (auto i = first; ++i != last;) {
 			if (p(*i)) {
 				sort::iter_swap(i, first);
 				++first;
@@ -378,14 +379,15 @@ namespace sort {
 	template<class ForwardIt, class UnaryPred>
 	constexpr ForwardIt reversed_partition(ForwardIt first, const ForwardIt last, UnaryPred p)
 	{
-		for (; first != last; ++first) {
+		for (;;) {
+			if (first == last)
+				return first;
 			if (p(*first))
 				break;
+			++first;
 		}
-		if (first == last)
-			return first;
-		auto f = first;
-		for (auto i = ++f; i != last; ++i) {
+
+		for (auto i = first; ++i != last;) {
 			if (!p(*i)) {
 				sort::iter_swap(i, first);
 				++first;
