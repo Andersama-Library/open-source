@@ -2290,7 +2290,7 @@ namespace sort {
 				if constexpr (std::is_reference<decltype(*j)>::value) {
 					auto& rhs = *j;
 					auto& lhs = *(--j);
-					if (!comp(rhs, lhs))
+					if (comp(rhs, lhs)) //rhs < lhs
 						break;
 					sort::swap_branchless_unconditional(rhs, lhs);
 				} else {
@@ -2298,7 +2298,7 @@ namespace sort {
 					auto rhs = *j;
 					auto lhs = *(--j);
 					auto l   = j;
-					if (!comp(rhs, lhs))
+					if (comp(rhs, lhs))
 						break;
 					sort::iter_swap(r, l);
 				}
