@@ -263,7 +263,7 @@ namespace sort {
 		return false;
 	}
 
-	template<class RAIt, class Compare = std::less<>> constexpr void insertion_sort(RAIt, RAIt, Compare);
+	template<class It, class Compare = std::less<>> constexpr void insertion_sort(It, It, Compare);
 
 	template<typename It, typename Compare = std::less<>> constexpr void intro_sort(It, It, Compare, size_t);
 
@@ -2352,7 +2352,7 @@ namespace sort {
 		}
 	}
 
-	template<class RAIt, class Compare> constexpr void insertion_sort(RAIt first, RAIt last, Compare comp)
+	template<class It, class Compare> constexpr void insertion_sort(It first, It last, Compare comp = Compare{})
 	{
 		auto i = first;
 		for (; i != last; ++i) {
@@ -2361,17 +2361,42 @@ namespace sort {
 				if constexpr (std::is_reference<decltype(*j)>::value) {
 					auto& rhs = *j;
 					auto& lhs = *(--j);
-					if (comp(rhs, lhs)) //rhs < lhs
+					if (!comp(rhs, lhs)) // lhs < rhs (should be lhs <= rhs, rhs >= lhs, !(rhs < lhs))
 						break;
-					sort::swap_branchless_unconditional(rhs, lhs);
+					sort::swap_branchless_unconditional(lhs, rhs);
 				} else {
 					auto r   = j;
 					auto rhs = *j;
 					auto lhs = *(--j);
 					auto l   = j;
-					if (comp(rhs, lhs))
+					if (!comp(rhs, lhs))
 						break;
-					sort::iter_swap(r, l);
+					sort::iter_swap(l, r);
+				}
+			}
+		}
+	}
+
+	template<class It, class Compare> constexpr void reverse_insertion_sort(It first, It last, Compare comp = Compare{})
+	{
+		auto i = first;
+		for (; i != last; ++i) {
+			auto j = i;
+			for (; j != first;) {
+				if constexpr (std::is_reference<decltype(*j)>::value) {
+					auto& rhs = *j;
+					auto& lhs = *(--j);
+					if (!comp(lhs, rhs)) // lhs < rhs (should be lhs <= rhs, rhs >= lhs, !(rhs < lhs))
+						break;
+					sort::swap_branchless_unconditional(lhs, rhs);
+				} else {
+					auto r   = j;
+					auto rhs = *j;
+					auto lhs = *(--j);
+					auto l   = j;
+					if (!comp(lhs, rhs))
+						break;
+					sort::iter_swap(l, r);
 				}
 			}
 		}
