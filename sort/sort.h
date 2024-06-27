@@ -211,10 +211,10 @@ namespace sort {
 	{
 		if constexpr (::std::is_pointer_v<::std::decay_t<It>>) { // special-case pointers and arrays
 			return it + 0;
-		} else if constexpr (is_pointer_convertible_iterator<It>::value) {
-			return static_cast<typename ::std::iterator_traits<It>::pointer_type>(it);
 		} else if constexpr (is_msvc_unwrappable_iterator<It>::value) {
 			return static_cast<It&&>(it)._Unwrapped();
+		} else if constexpr (is_pointer_convertible_iterator<It>::value) {
+			return static_cast<typename ::std::iterator_traits<It>::pointer_type>(it);
 		} else {
 			return static_cast<It&&>(it);
 		}
@@ -299,17 +299,18 @@ namespace sort {
 	{
 		using value_type  = sort::remove_cvref_t<typename std::iterator_traits<ForwardIt1>::value_type>;
 		using value_type2 = sort::remove_cvref_t<typename std::iterator_traits<ForwardIt2>::value_type>;
-		if constexpr (::std::is_trivial<value_type>::value) {
+		if constexpr (has_swap_member<value_type, value_type2>::value) { // use type's provided swap
+																		 // function if it exists
+			(*a).swap(*b);
+		} else if constexpr (::std::is_swappable_with<value_type&, value_type2&>::value ||
+							 ::std::is_swappable_with<value_type,
+											 value_type2>::value) { // fallback to std::swap, not necessarily constexpr
+			using std::swap;
+			swap(*a, *b);
+		} else if constexpr (::std::is_trivial<value_type>::value) {
 			auto temp = *a;
 			*a        = *b;
 			*b        = temp;
-		} else if constexpr (has_swap_member<value_type, value_type2>::value) { // use type's provided swap
-																				// function if it exists
-			(*a).swap(*b);
-		} else if constexpr (::std::is_swappable_with<value_type&,
-											 value_type2&>::value) { // fallback to std::swap, not necessarily constexpr
-			using std::swap;
-			swap(*a, *b);
 		} else {
 			static_assert(false, "iter swap requires that the dereferenced types are swappable!");
 		}
@@ -317,18 +318,18 @@ namespace sort {
 
 	template<typename T> release_force_inline constexpr void swap_branchless_unconditional(T& lhs, T& rhs)
 	{
-		if constexpr (::std::is_trivial<T>::value) {
+		if constexpr (has_swap_member<T, T>::value) { // use type's provided swap function if it exists
+													  //::std::is_invocable<decltype(&(lhs.swap)), T& > ::value
+			lhs.swap(rhs);
+		} else if constexpr (::std::is_swappable_with<T&, T&>::value ||
+							 ::std::is_swappable_with<T,
+											 T>::value) { // fallback to std::swap, not necessarily constexpr
+			using std::swap;
+			swap(lhs, rhs);
+		} else if constexpr (::std::is_trivial<T>::value) {
 			auto tmp = lhs;
 			lhs      = rhs;
 			rhs      = tmp;
-		} else if constexpr (has_swap_member<T,
-											 T>::value) { // use type's provided swap function if it exists
-														  // //::std::is_invocable<decltype(&(lhs.swap)), T& > ::value
-			lhs.swap(rhs);
-		} else if constexpr (::std::is_swappable_with<T&,
-											 T&>::value) { // fallback to std::swap, not necessarily constexpr
-			using std::swap;
-			swap(lhs, rhs);
 		} else {
 			static_assert(false, "swap_branchless_unconditional requires that the types are swappable!");
 		}
@@ -336,19 +337,19 @@ namespace sort {
 
 	template<typename T> release_force_inline constexpr void swap_branchless_conditional(T& lhs, T& rhs, bool c)
 	{
-		if constexpr (::std::is_trivial<T>::value) {
-			T tmp[2] = {lhs, rhs};
-			lhs      = tmp[c];
-			rhs      = tmp[!c];
-		} else if constexpr (::std::is_invocable<decltype(&(lhs.swap)),
-											 T&>::value) { // use type's provided swap function if it exists
+		if constexpr (has_swap_member<T, T>::value) { // use type's provided swap function if it exists
 			if (c)
 				lhs.swap(rhs);
-		} else if constexpr (::std::is_swappable_with<T&,
-											 T&>::value) { // fallback to std::swap, not necessarily constexpr
+		} else if constexpr (::std::is_swappable_with<T&, T&>::value ||
+							 ::std::is_swappable_with<T,
+											 T>::value) { // fallback to std::swap, not necessarily constexpr
 			using std::swap;
 			if (c)
 				swap(lhs, rhs);
+		} else if constexpr (::std::is_trivial<T>::value) {
+			T tmp[2] = {lhs, rhs};
+			lhs      = tmp[c];
+			rhs      = tmp[!c];
 		} else {
 			static_assert(false, "swap_branchless_unconditional requires that the types are swappable!");
 		}
