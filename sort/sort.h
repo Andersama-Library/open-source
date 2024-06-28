@@ -961,7 +961,7 @@ namespace sort {
 
 					mns[x]          = key_byte < mns[x] ? key_byte : mns[x];
 					mxs[x]          = key_byte > mxs[x] ? key_byte : mxs[x];
-					keys_ordered[x] = last_key[x] <= key_byte;
+					keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
 					last_key[x]     = key_byte;
 
 					++stack_data[count_indexs * x + key_byte];
@@ -1078,7 +1078,7 @@ namespace sort {
 			for (uint32_t x = sizeof(key_type); --x < sizeof(key_type);) {
 				bool bit_range = mns[x] != mxs[x];
 				next.idxs |= (x << (8 * next.bytes)) * bit_range;
-				next.bytes += bit_range;
+				next.bytes += bit_range && !keys_ordered[x];
 			}
 
 			its[0]              = start;
@@ -1469,9 +1469,14 @@ namespace sort {
 			max_key_type mx                    = max_key_type{0};
 			uint8_t      mxs[sizeof(key_type)] = {0};
 			uint8_t      mns[sizeof(key_type)];
+			uint8_t      last_key[sizeof(key_type)] = {0};
+			uint8_t      keys_ordered[sizeof(key_type)];
 
 			for (uint8_t& mn : mns)
 				mn = ~uint8_t{0};
+
+			for (uint8_t& ok : keys_ordered)
+				ok = true;
 
 			for (It it = start; it != end; ++it) {
 				key_type k = ::std::get<Idx>(extract_key(*it));
@@ -1495,6 +1500,8 @@ namespace sort {
 
 					mns[x] = key_byte < mns[x] ? key_byte : mns[x];
 					mxs[x] = key_byte > mxs[x] ? key_byte : mxs[x];
+					keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
+					last_key[x]     = key_byte;
 
 					++stack_data[count_indexs * x + key_byte];
 				}
@@ -1740,7 +1747,7 @@ namespace sort {
 			for (uint32_t x = sizeof(key_type); --x < sizeof(key_type);) {
 				bool bit_range = mns[x] != mxs[x];
 				next.idxs |= (x << (8 * next.bytes)) * bit_range;
-				next.bytes += bit_range;
+				next.bytes += bit_range && !keys_ordered[x];
 			}
 
 			its[0]              = start;
@@ -2302,9 +2309,11 @@ namespace sort {
 							std::make_index_sequence<std::tuple_size<key_type>::value>{}, parameter_list<>{});
 #if defined __has_include
 #if __has_include(<bitset>)
-		} else if constexpr (is_bitset<key_type>::value) {
+		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) > 1) {
 
 			sort::counting_sort_byte_shift_flat(f, l, extract_key);
+		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) <= 1) {
+			sort::partition_branchless(f, l, [](const auto& value) { return !(ExtractKey{}(value)[0]); });
 #endif
 #endif
 		} else if constexpr (::std::is_same<key_type, bool>::value || ::std::is_same<key_type, const bool&>::value) {
