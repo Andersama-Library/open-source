@@ -316,6 +316,32 @@ namespace sort {
 		}
 	}
 
+	template<class ForwardIt1, class ForwardIt2>
+	release_force_inline constexpr void iter_swap_conditional(ForwardIt1 a, ForwardIt2 b, bool c)
+	{
+		using value_type  = sort::remove_cvref_t<typename std::iterator_traits<ForwardIt1>::value_type>;
+		using value_type2 = sort::remove_cvref_t<typename std::iterator_traits<ForwardIt2>::value_type>;
+		if constexpr (has_swap_member<value_type, value_type2>::value) { // use type's provided swap
+																		 // function if it exists
+			if (c)
+				(*a).swap(*b);
+		} else if constexpr (::std::is_swappable_with<value_type&, value_type2&>::value ||
+							 ::std::is_swappable_with<value_type,
+											 value_type2>::value) { // fallback to std::swap, not necessarily constexpr
+			using std::swap;
+			if (c)
+				swap(*a, *b);
+		} else if constexpr (::std::is_trivial<value_type>::value) {
+			if (c) {
+				auto temp = *a;
+				*a        = *b;
+				*b        = temp;
+			}
+		} else {
+			static_assert(false, "iter swap requires that the dereferenced types are swappable!");
+		}
+	}
+
 	template<typename T> release_force_inline constexpr void swap_branchless_unconditional(T& lhs, T& rhs)
 	{
 		if constexpr (has_swap_member<T, T>::value) { // use type's provided swap function if it exists
@@ -377,6 +403,30 @@ namespace sort {
 	}
 
 	template<class ForwardIt, class UnaryPred>
+	constexpr ForwardIt partition_branchless(ForwardIt first, ForwardIt last, UnaryPred p)
+	{
+		for (;;) {
+			if (first == last)
+				return first;
+			if (!p(*first))
+				break;
+			++first;
+		}
+
+		for (auto i = first; ++i != last;) {
+			size_t r = p(*i);
+			sort::iter_swap(i, first);
+			first += r;
+			// if (p(*i)) {
+			//	sort::iter_swap(i, first);
+			//	++first;
+			// }
+		}
+
+		return first;
+	}
+
+	template<class ForwardIt, class UnaryPred>
 	constexpr ForwardIt reversed_partition(ForwardIt first, const ForwardIt last, UnaryPred p)
 	{
 		for (;;) {
@@ -401,7 +451,8 @@ namespace sort {
 	{
 		for (; start < end; ++start) {
 			--end;
-			swap_branchless_unconditional(*start, *end);
+			sort::iter_swap(start, end);
+			// sort::swap_branchless_unconditional(*start, *end);
 		}
 	}
 
@@ -551,7 +602,7 @@ namespace sort {
 			key_type diff = mx - mn;
 			switch (diff) {
 			case 1:
-				sort::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
+				sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 			case 0:
 				return;
 			default:
@@ -678,7 +729,7 @@ namespace sort {
 			key_type diff = mx - mn;
 			switch (diff) {
 			case 1:
-				sort::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
+				sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 			case 0:
 				return;
 			default:
@@ -859,7 +910,8 @@ namespace sort {
 #endif
 		) {
 			max_key_type mx = max_key_type{1};
-			sort::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
+			// std::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
+			sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 		} else if constexpr (true) {
 			// constexpr size_t initial_count_indexs      = 256 * sizeof(key_type);
 			constexpr size_t required_start_end_indexs = 257 * sizeof(key_type);
@@ -878,9 +930,14 @@ namespace sort {
 			max_key_type mx                    = max_key_type{0};
 			uint8_t      mxs[sizeof(key_type)] = {0};
 			uint8_t      mns[sizeof(key_type)];
+			uint8_t      last_key[sizeof(key_type)] = {0};
+			uint8_t      keys_ordered[sizeof(key_type)];
 
 			for (uint8_t& mn : mns)
 				mn = ~uint8_t{0};
+
+			for (uint8_t& ok : keys_ordered)
+				ok = true;
 
 			for (It it = start; it != end; ++it) {
 				key_type k = extract_key(*it);
@@ -902,8 +959,10 @@ namespace sort {
 						key_byte = ((k >> (x * 8)) & 0xff);
 					}
 
-					mns[x] = key_byte < mns[x] ? key_byte : mns[x];
-					mxs[x] = key_byte > mxs[x] ? key_byte : mxs[x];
+					mns[x]          = key_byte < mns[x] ? key_byte : mns[x];
+					mxs[x]          = key_byte > mxs[x] ? key_byte : mxs[x];
+					keys_ordered[x] = last_key[x] <= key_byte;
+					last_key[x]     = key_byte;
 
 					++stack_data[count_indexs * x + key_byte];
 				}
@@ -914,7 +973,7 @@ namespace sort {
 				key_type diff = mx - mn;
 				switch (diff) {
 				case 1:
-					sort::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
+					sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 				case 0:
 					return;
 				default:
@@ -924,7 +983,7 @@ namespace sort {
 				auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
 				switch (diff) {
 				case 1:
-					sort::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
+					sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 				case 0:
 					return;
 				default:
@@ -992,7 +1051,8 @@ namespace sort {
 						}
 
 						if (!all_strictly_ones) {
-							sort::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
+							sort::partition_branchless(
+											start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 							return;
 						}
 					} else if (xor_count == 0) {
@@ -1002,7 +1062,7 @@ namespace sort {
 					auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
 					switch (diff) {
 					case 1:
-						sort::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
+						sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 					case 0:
 						return;
 					default:
@@ -1042,7 +1102,7 @@ namespace sort {
 
 			switch (partitions) {
 			case 2:
-				sort::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
+				sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 				[[fallthrough]];
 			case 1:
 				[[fallthrough]];
@@ -1142,7 +1202,7 @@ namespace sort {
 							key_type diff = mx - mn;
 							switch (diff) {
 							case 1:
-								sort::partition(start_it + start_offset, end_it,
+								sort::partition_branchless(start_it + start_offset, end_it,
 												[&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 								[[fallthrough]];
 							case 0:
@@ -1154,7 +1214,7 @@ namespace sort {
 							auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
 							switch (diff) {
 							case 1:
-								sort::partition(start_it + start_offset, end_it,
+								sort::partition_branchless(start_it + start_offset, end_it,
 												[&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 								[[fallthrough]];
 							case 0:
@@ -1225,7 +1285,7 @@ namespace sort {
 									}
 
 									if (!all_strictly_ones) {
-										sort::partition(start_it + start_offset, end_it,
+										sort::partition_branchless(start_it + start_offset, end_it,
 														[&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 										continue;
 									}
@@ -1236,7 +1296,7 @@ namespace sort {
 								auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
 								switch (diff) {
 								case 1:
-									sort::partition(start_it + start_offset, end_it,
+									sort::partition_branchless(start_it + start_offset, end_it,
 													[&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 									[[fallthrough]];
 								case 0:
@@ -1357,7 +1417,7 @@ namespace sort {
 #endif
 
 			max_key_type mx    = max_key_type{1};
-			auto         split = sort::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
+			auto split = sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 			if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 				if constexpr (sizeof...(Idxs)) {
 					counting_sort_get_impl_recursive(start, split, extract_key, std::index_sequence<Idxs...>{},
@@ -1445,7 +1505,7 @@ namespace sort {
 				max_key_type diff = mx - mn;
 				switch (diff) {
 				case 1: {
-					auto it = sort::partition(start, end, [&mx](const auto& v) {
+					auto it = sort::partition_branchless(start, end, [&mx](const auto& v) {
 						return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
 					});
 					if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
@@ -1488,7 +1548,7 @@ namespace sort {
 				auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
 				switch (diff) {
 				case 1: {
-					auto it = sort::partition(start, end, [&mx](const auto& v) {
+					auto it = sort::partition_branchless(start, end, [&mx](const auto& v) {
 						return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
 					});
 					if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
@@ -1589,7 +1649,7 @@ namespace sort {
 						}
 
 						if (!all_strictly_ones) {
-							auto it = sort::partition(start, end, [&mx](const auto& v) {
+							auto it = sort::partition_branchless(start, end, [&mx](const auto& v) {
 								return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
 							});
 
@@ -1631,7 +1691,7 @@ namespace sort {
 					auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
 					switch (diff) {
 					case 1: {
-						auto it = sort::partition(start, end, [&mx](const auto& v) {
+						auto it = sort::partition_branchless(start, end, [&mx](const auto& v) {
 							return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
 						});
 						if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
@@ -1704,7 +1764,7 @@ namespace sort {
 
 			switch (partitions) {
 			case 2: {
-				auto it = sort::partition(start, end, [&mx](const auto& v) {
+				auto it = sort::partition_branchless(start, end, [&mx](const auto& v) {
 					return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
 				});
 				if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
@@ -1860,7 +1920,7 @@ namespace sort {
 							max_key_type diff = mx - mn;
 							switch (diff) {
 							case 1: {
-								auto it = sort::partition(start_it + start_offset, end_it, [&mx](const auto& v) {
+								auto it = sort::partition_branchless(start_it + start_offset, end_it, [&mx](const auto& v) {
 									return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
 								});
 								if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
@@ -1904,7 +1964,7 @@ namespace sort {
 							auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
 							switch (diff) {
 							case 1: {
-								auto it = sort::partition(start_it + start_offset, end_it, [&mx](const auto& v) {
+								auto it = sort::partition_branchless(start_it + start_offset, end_it, [&mx](const auto& v) {
 									return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
 								});
 								if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
@@ -2006,7 +2066,7 @@ namespace sort {
 									}
 
 									if (!all_strictly_ones) {
-										auto it = sort::partition(
+										auto it = sort::partition_branchless(
 														start_it + start_offset, end_it, [&mx](const auto& v) {
 															return sort::treat_as_unsigned(::std::get<Idx>(
 																				   ExtractKey{}(v))) < mx;
@@ -2056,7 +2116,7 @@ namespace sort {
 								auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
 								switch (diff) {
 								case 1: {
-									auto it = sort::partition(start_it + start_offset, end_it, [&mx](const auto& v) {
+									auto it = sort::partition_branchless(start_it + start_offset, end_it, [&mx](const auto& v) {
 										return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
 									});
 									if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
@@ -2250,7 +2310,7 @@ namespace sort {
 		} else if constexpr (::std::is_same<key_type, bool>::value || ::std::is_same<key_type, const bool&>::value) {
 			// partition puts things that return true first...but counting sort should treat this as a value so...we'll
 			// flip the extract function to keep the semantics the same as expected
-			sort::partition(f, l, [](const auto& value) { return !ExtractKey{}(value); });
+			sort::partition_branchless(f, l, [](const auto& value) { return !ExtractKey{}(value); });
 		} else if constexpr (::std::is_integral<key_type>::value) {
 			if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
 							::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
