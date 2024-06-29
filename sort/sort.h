@@ -2537,22 +2537,31 @@ namespace sort {
 		}
 	}
 
-	template<class _RanIt, class _Pr>
-	release_force_inline constexpr void med3_unchecked(_RanIt _First, _RanIt _Mid, _RanIt _Last, _Pr _Pred)
+	template<class It, class Predicate>
+	release_force_inline constexpr void med3_unchecked(It first, It mid, It last, Predicate pred)
 	{
 		// sort median of three elements to middle
-		if (_Pred(*_Mid, *_First)) {
-			sort::iter_swap(_Mid, _First);
-			//sort::swap_branchless_unconditional(*_Mid, *_First);
+		using T                            = sort::iter_value_t<It>;
+		constexpr bool use_swap_branchless = (std::is_arithmetic<T>::value || std::is_same<T, bool>::value) &&
+											 std::is_same<sort::remove_cvref_t<decltype(*first)>, T>::value;
+		if (pred(*mid, *first)) {
+			if constexpr (use_swap_branchless)
+				sort::swap_branchless_unconditional(*mid, *first);
+			else
+				sort::iter_swap(mid, first);
 		}
 
-		if (_Pred(*_Last, *_Mid)) { // swap middle and last, then test first again
-			sort::iter_swap(_Last, _Mid);
-			//sort::swap_branchless_unconditional(*_Last, *_Mid);
+		if (pred(*last, *mid)) { // swap middle and last, then test first again
+			if constexpr (use_swap_branchless)
+				sort::swap_branchless_unconditional(*last, *mid);
+			else
+				sort::iter_swap(last, mid);
 
-			if (_Pred(*_Mid, *_First)) {
-				sort::iter_swap(_Mid, _First);
-				//sort::swap_branchless_unconditional(*_Mid, *_First);
+			if (pred(*mid, *first)) {
+				if constexpr (use_swap_branchless)
+					sort::swap_branchless_unconditional(*mid, *first);
+				else
+					sort::iter_swap(mid, first);
 			}
 		}
 	}
@@ -2579,6 +2588,9 @@ namespace sort {
 	constexpr std::pair<It, It> partition_by_median_guess_unchecked(It start, It end, Unary predicate)
 	{
 		// partition [_First, _Last)
+		using T                            = sort::iter_value_t<It>;
+		constexpr bool use_swap_branchless = (std::is_arithmetic<T>::value || std::is_same<T, bool>::value) &&
+											 std::is_same<sort::remove_cvref_t<decltype(*start)>, T>::value;
 		It _Mid = start + ((end - start) >> 1); // shift for codegen
 		sort::guess_median_unchecked(start, _Mid, sort::prev_iter(end), predicate);
 		It _Pfirst = _Mid;
@@ -2603,8 +2615,11 @@ namespace sort {
 				} else if (predicate(*_Gfirst, *_Pfirst)) {
 					break;
 				} else if (_Plast != _Gfirst) {
-					// ort::swap_branchless_unconditional(*_Plast, *_Gfirst);
-					sort::iter_swap(_Plast, _Gfirst);
+					if constexpr (use_swap_branchless) {
+						sort::swap_branchless_unconditional(*_Plast, *_Gfirst);
+					} else {
+						sort::iter_swap(_Plast, _Gfirst);
+					}
 					++_Plast;
 				} else {
 					++_Plast;
@@ -2619,7 +2634,10 @@ namespace sort {
 					break;
 				} else if (--_Pfirst != _Glast_prev) {
 					// sort::swap_branchless_unconditional(*_Pfirst, *_Glast_prev);
-					sort::iter_swap(_Pfirst, _Glast_prev);
+					if constexpr (use_swap_branchless)
+						sort::swap_branchless_unconditional(*_Pfirst, *_Glast_prev);
+					else
+						sort::iter_swap(_Pfirst, _Glast_prev);
 				}
 			}
 
@@ -2629,26 +2647,37 @@ namespace sort {
 
 			if (_Glast == start) { // no room at bottom, rotate pivot upward
 				if (_Plast != _Gfirst) {
-					// sort::swap_branchless_unconditional(*_Pfirst, *_Plast);
-					sort::iter_swap(_Pfirst, _Plast);
+					if constexpr (use_swap_branchless)
+						sort::swap_branchless_unconditional(*_Pfirst, *_Plast);
+					else
+						sort::iter_swap(_Pfirst, _Plast);
 				}
 
 				++_Plast;
-				// sort::swap_branchless_unconditional(*_Pfirst, *_Gfirst);
-				sort::iter_swap(_Pfirst, _Gfirst);
+
+				if constexpr (use_swap_branchless)
+					sort::swap_branchless_unconditional(*_Pfirst, *_Gfirst);
+				else
+					sort::iter_swap(_Pfirst, _Gfirst);
+
 				++_Pfirst;
 				++_Gfirst;
 			} else if (_Gfirst == end) { // no room at top, rotate pivot downward
 				if (--_Glast != --_Pfirst) {
-					// sort::swap_branchless_unconditional(*_Glast, *_Pfirst);
-					sort::iter_swap(_Glast, _Pfirst);
+					if constexpr (use_swap_branchless)
+						sort::swap_branchless_unconditional(*_Glast, *_Pfirst);
+					else
+						sort::iter_swap(_Glast, _Pfirst);
 				}
-
-				// sort::swap_branchless_unconditional(*_Pfirst, *--_Plast);
-				sort::iter_swap(_Pfirst, --_Plast);
+				if constexpr (use_swap_branchless)
+					sort::swap_branchless_unconditional(*_Pfirst, *--_Plast);
+				else
+					sort::iter_swap(_Pfirst, --_Plast);
 			} else {
-				// sort::swap_branchless_unconditional(*_Gfirst, *--_Glast);
-				sort::iter_swap(_Gfirst, --_Glast);
+				if constexpr (use_swap_branchless)
+					sort::swap_branchless_unconditional(*_Gfirst, *--_Glast);
+				else
+					sort::iter_swap(_Gfirst, --_Glast);
 				++_Gfirst;
 			}
 		}
