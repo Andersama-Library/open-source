@@ -2352,17 +2352,38 @@ namespace sort {
 
 	template<class It, class Compare> constexpr void insertion_sort(It first, It last, Compare comp = Compare{})
 	{
-		auto i = first;
-		for (; i != last; ++i) {
-			auto j = i;
-			for (; j != first;) {
-				if constexpr (std::is_reference<decltype(*j)>::value) {
+		using T = sort::iter_value_t<It>;
+		auto i  = first;
+		if constexpr ((std::is_arithmetic<T>::value || std::is_same<T, bool>::value) &&
+						std::is_same<sort::remove_cvref_t<decltype(*first)>, T>::value) { //this second line is to gaurd against proxy references / reference wrappers
+			for (; i != last; ++i) { // performs about 25% better than below with simple types like below
+				auto j = i;
+				for (; j != first;) {
 					auto& rhs = *j;
 					auto& lhs = *(--j);
 					if (!comp(rhs, lhs)) // lhs < rhs (should be lhs <= rhs, rhs >= lhs, !(rhs < lhs))
 						break;
 					sort::swap_branchless_unconditional(lhs, rhs);
-				} else {
+				}
+			}
+		} else if constexpr (std::is_move_constructible<T>::value) {
+			for (; i != last; ++i) {
+				auto j  = i;
+				auto h = i;
+				T    tmp(std::move(*j));
+
+				for (; j != first;) {
+					if (!comp(tmp, *(--j)))
+						break;
+					*h = std::move(*j);
+					h  = j;
+				}
+				*h = std::move(tmp);
+			}
+		} else if constexpr (std::is_assignable<T,T>::value) {
+			for (; i != last; ++i) {
+				auto j = i;
+				for (; j != first;) {
 					auto r   = j;
 					auto rhs = *j;
 					auto lhs = *(--j);
@@ -2372,6 +2393,8 @@ namespace sort {
 					sort::iter_swap(l, r);
 				}
 			}
+		} else {
+			static_assert(false, "type must be arthmetic, move constructible or assignable!");
 		}
 	}
 
