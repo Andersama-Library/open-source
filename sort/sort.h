@@ -332,11 +332,9 @@ namespace sort {
 			if (c)
 				swap(*a, *b);
 		} else if constexpr (::std::is_trivial<value_type>::value) {
-			if (c) {
-				auto temp = *a;
-				*a        = *b;
-				*b        = temp;
-			}
+			decltype(*a) tmp[2] = {*a, *b};
+			*a      = tmp[c];
+			*b      = tmp[!c];
 		} else {
 			static_assert(false, "iter swap requires that the dereferenced types are swappable!");
 		}
