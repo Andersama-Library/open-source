@@ -2316,14 +2316,86 @@ namespace sort {
 						std::make_index_sequence<std::tuple_size<key_type>::value>{}, parameter_list<>{});
 	}
 
+	template<typename... key_types> constexpr size_t partition_count(std::tuple<key_types...>);
+
+	template<typename key_type> constexpr size_t partition_count()
+	{
+		if constexpr (is_tuple<key_type>::value) {
+			return partition_count(key_type());
+			// leaf_partitions<decltype(::std::get<0>(std::declval<key_type>())), depth + 1>() && depth < 2;
+		} else if constexpr (is_array<key_type>::value) {
+			size_t partitions_0 = partition_count<decltype(::std::get<0>(std::declval<key_type>()))>();
+			size_t partitions   = 1;
+			for (size_t i = 0; i < ::std::tuple_size<key_type>::value; i++) {
+				partitions = (partitions_0 * partitions) > partitions ? (partitions_0 * partitions) : partitions;
+			}
+			return partitions;
+#if defined __has_include
+#if __has_include(<bitset>)
+		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) > 1) {
+			return 0;
+		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) <= 1) {
+			return 2;
+#endif
+#endif
+		} else if constexpr (::std::is_same<key_type, bool>::value || ::std::is_same<key_type, const bool&>::value) {
+			return 2;
+		} else if constexpr (::std::is_integral<key_type>::value) {
+			return 0;
+		} else if constexpr (::std::is_floating_point<key_type>::value) {
+			return 0;
+		} else {
+			return 0;
+		}
+	}
+
+	template<typename... key_types> 
+	constexpr size_t partition_count(std::tuple<key_types...>)
+	{
+		size_t partitions = 1;
+		((partitions = (partition_count<key_types>() * partitions) > partitions
+									   ? (partition_count<key_types>() * partitions)
+									   : partitions),
+						...);
+		bool any_zeroed = ((partition_count<key_types>() == 0) || ... || false);
+		return partitions * !any_zeroed;
+	}
+
+	template<typename key_type, size_t depth = 0> constexpr bool leaf_partitions()
+	{
+		if constexpr (is_tuple<key_type>::value) {
+			return leaf_partitions<decltype(::std::get<0>(std::declval<key_type>())), depth + 1>() && depth < 2;
+		} else if constexpr (is_array<key_type>::value) {
+			return leaf_partitions<decltype(::std::get<0>(std::declval<key_type>())), depth + 1>() &&
+				   ::std::tuple_size<key_type>::value < 2; // each array index
+#if defined __has_include
+#if __has_include(<bitset>)
+		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) > 1) {
+			return false;
+		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) <= 1) {
+			return true;
+#endif
+#endif
+		} else if constexpr (::std::is_same<key_type, bool>::value || ::std::is_same<key_type, const bool&>::value) {
+			return true;
+		} else if constexpr (::std::is_integral<key_type>::value) {
+			return false;
+		} else if constexpr (::std::is_floating_point<key_type>::value) {
+			return false;
+		} else {
+			return false;
+		}
+	}
+
 	template<typename It, typename ExtractKey = sort::identity_less_than<>>
 	constexpr void counting_sort(It start, It end, ExtractKey extract_key)
 	{
 		using key_type = sort::remove_cvref_t<decltype(ExtractKey{}(::std::move(*std::declval<It>())))>;
-
-		auto f = get_unwrapped(start);
-		auto l = get_unwrapped(end);
-		if constexpr (std::is_same<typename ::std::iterator_traits<It>::iterator_category,
+		constexpr size_t potential_partitions = partition_count<key_type>();
+		auto             f                    = get_unwrapped(start);
+		auto             l                    = get_unwrapped(end);
+		if constexpr ((potential_partitions == 0 ||
+						potential_partitions > 16) && std::is_same<typename ::std::iterator_traits<It>::iterator_category,
 									  ::std::random_access_iterator_tag>::value) {
 			auto item_count = l - f;
 			if (item_count <= insertion_sort_threshold) {
