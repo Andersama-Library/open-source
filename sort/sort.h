@@ -707,9 +707,14 @@ namespace sort {
 		key_type mx                    = key_type{0};
 		uint8_t  mxs[sizeof(key_type)] = {0};
 		uint8_t  mns[sizeof(key_type)];
+		uint8_t  last_key[sizeof(key_type)] = {0};
+		uint8_t  keys_ordered[sizeof(key_type)];
 
 		for (uint8_t& mn : mns)
 			mn = ~uint8_t{0};
+
+		for (uint8_t& ok : keys_ordered)
+			ok = true;
 
 		for (It it = start; it != end; ++it) {
 			key_type k = extract_key(*it);
@@ -717,6 +722,8 @@ namespace sort {
 				uint8_t key_byte = ((k >> (x * 8)) & 0xff);
 				mns[x]           = key_byte < mns[x] ? key_byte : mns[x];
 				mxs[x]           = key_byte > mxs[x] ? key_byte : mxs[x];
+				keys_ordered[x]  = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
+				last_key[x]      = key_byte;
 			}
 			mn = k < mn ? k : mn;
 			mx = k > mx ? k : mx;
@@ -794,7 +801,7 @@ namespace sort {
 		//  book-keeping we only swap each out of position item once, this guarantees
 		//  we avoid memory dependencies on previous swaps! Allowing the cpu to absolutely blitz through
 		//  each swap and predict the remainder of the loops well in advance
-		if ((mxs[bit_shift >> 3] - mns[bit_shift >> 3]) > 1) {
+		if ((mxs[bit_shift >> 3] - mns[bit_shift >> 3]) > 1 && !keys_ordered[bit_shift >> 3]) {
 			size_t sorted_count = 0;
 			do {
 				for (size_t x = 0; x < 256; x++) {
@@ -1113,7 +1120,6 @@ namespace sort {
 			auto start_it = its[depth];
 
 			uint32_t bit_shift = ((next.idxs >> (depth * 8)) & 0xff) * 8;
-			uint32_t bit_shift    = ((next.idxs >> (depth * 8)) & 0xff) * 8;
 			if (!keys_ordered[bit_shift >> 3]) {
 				size_t sorted_count = 0;
 				do {
