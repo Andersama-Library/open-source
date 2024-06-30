@@ -156,6 +156,9 @@ namespace sort {
 	template<typename> struct is_tuple : std::false_type {};
 	template<typename... T> struct is_tuple<std::tuple<T...>> : std::true_type {};
 
+	template<typename> struct is_array : std::false_type {};
+	template<typename T, size_t N> struct is_array<std::array<T,N>> : std::true_type {};
+
 #if defined __has_include
 #if __has_include(<bitset>)
 	template<typename> struct is_bitset : std::false_type {};
@@ -1450,7 +1453,27 @@ namespace sort {
 									typename first_deferred::idxs{}, popped_list{});
 				}
 			}
-		} else {
+		}
+		else if constexpr (is_array<key_type>::value) {
+			if constexpr (sizeof...(Idxs)) {
+				return counting_sort_get_impl_recursive(
+								start, end,
+								[](const auto& v) {
+									return ::std::get<(std::tuple_size<key_type>::value - 1) - Idx>(ExtractKey{}(v));
+								},
+								std::make_index_sequence<std::tuple_size<key_type>::value>{},
+								parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{});
+			} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
+				return counting_sort_get_impl_recursive(
+								start, end,
+								[](const auto& v) {
+									return ::std::get<(std::tuple_size<key_type>::value - 1) - Idx>(ExtractKey{}(v));
+								},
+								std::make_index_sequence<std::tuple_size<key_type>::value>{},
+								parameter_list<Deferred...>{});
+			}
+		}
+		else {
 #if defined __has_include
 #if __has_include(<bitset>)
 			using max_key_type = typename std::conditional<is_bitset<key_type>::value, key_type,
