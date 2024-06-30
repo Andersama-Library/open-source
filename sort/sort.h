@@ -959,7 +959,8 @@ namespace sort {
 					uint8_t key_byte;
 					if constexpr (!std::is_integral<key_type>::value) {
 						key_byte = (uint8_t)sort::treat_as_unsigned_rshifted(
-										k, x * 8); // treat_as_unsigned(sort::treat_as_unsigned(k) >> (x * 8)) & 0xff;
+										k, (uint32_t)(x * 8)); // treat_as_unsigned(sort::treat_as_unsigned(k) >> (x *
+															   // 8)) & 0xff;
 					} else {
 						key_byte = ((k >> (x * 8)) & 0xff);
 					}
@@ -1133,7 +1134,7 @@ namespace sort {
 						for (; s < e; s++) {
 							It      swap_left = start_it + s;
 							It      swap_target;
-							uint8_t key        = sort::treat_as_unsigned_rshifted(extract_key(*swap_left),
+							uint8_t key        = (uint8_t)sort::treat_as_unsigned_rshifted(extract_key(*swap_left),
 												   bit_shift); //(extract_key(*swap_left) >> bit_shift) & 0xff;
 							size_t  target_idx = counts[key];
 							swap_target        = start_it + target_idx;
@@ -1352,7 +1353,7 @@ namespace sort {
 									for (; s < e; s++) {
 										It      swap_left = start_it + s;
 										It      swap_target;
-										uint8_t key = sort::treat_as_unsigned_rshifted(
+										uint8_t key = (uint8_t)sort::treat_as_unsigned_rshifted(
 														extract_key(*swap_left), bit_shift);
 										size_t target_idx = counts[key];
 										swap_target       = start_it + target_idx;
