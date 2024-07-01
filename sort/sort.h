@@ -115,8 +115,9 @@ namespace sort {
 	template<class T> using iter_value_t = typename std::iterator_traits<sort::remove_cvref_t<T>>::value_type;
 #endif
 
-	constexpr size_t insertion_sort_threshold = 32;
-	constexpr size_t intro_sort_threshold     = 128;
+	constexpr size_t insertion_sort_threshold   = 32;
+	constexpr size_t intro_sort_threshold       = 128;
+	constexpr size_t small_merge_sort_threshold = 128; // must be strictly < 256
 
 	template<typename T, typename = void> struct is_pointer_convertible_iterator {
 		static constexpr bool value = false;
@@ -157,7 +158,7 @@ namespace sort {
 	template<typename... T> struct is_tuple<std::tuple<T...>> : std::true_type {};
 
 	template<typename> struct is_array : std::false_type {};
-	template<typename T, size_t N> struct is_array<std::array<T,N>> : std::true_type {};
+	template<typename T, size_t N> struct is_array<std::array<T, N>> : std::true_type {};
 
 #if defined __has_include
 #if __has_include(<bitset>)
@@ -336,8 +337,8 @@ namespace sort {
 				swap(*a, *b);
 		} else if constexpr (::std::is_trivial<value_type>::value) {
 			decltype(*a) tmp[2] = {*a, *b};
-			*a      = tmp[c];
-			*b      = tmp[!c];
+			*a                  = tmp[c];
+			*b                  = tmp[!c];
 		} else {
 			static_assert(false, "iter swap requires that the dereferenced types are swappable!");
 		}
@@ -379,6 +380,177 @@ namespace sort {
 			rhs      = tmp[!c];
 		} else {
 			static_assert(false, "swap_branchless_unconditional requires that the types are swappable!");
+		}
+	}
+
+	template<typename It, typename It2, typename It3, typename It4, typename ItDest, typename Compare = std::less<>>
+	constexpr ItDest merge(It first0, It2 last0, It3 first1, It4 last1, ItDest out, Compare comp)
+	{
+		using T = sort::iter_value_t<It>;
+
+		if constexpr ((std::is_arithmetic<T>::value || std::is_same<T, bool>::value) &&
+						std::is_same<sort::remove_cvref_t<decltype(*first0)>, T>::value) {
+			// this second line is to gaurd against proxy references /
+			// reference wrappers
+			if (first0 != last0 && first1 != last1) {
+				for (;;) {
+					if (comp(*first1, *first0)) {
+						*out = *first1;
+						++out;
+						++first1;
+
+						if (first1 == last1) {
+							break;
+						}
+					} else {
+						*out = *first0;
+						++out;
+						++first0;
+
+						if (first0 == last0) {
+							break;
+						}
+					}
+				}
+			}
+
+			for (; first0 != last0;) {
+				*out = *first0;
+				++out;
+				++first0;
+			}
+
+			for (; first1 != last1;) {
+				*out = *first1;
+				++out;
+				++first1;
+			}
+		} else if constexpr (std::is_move_constructible<T>::value) {
+			if (first0 != last0 && first1 != last1) {
+				for (;;) {
+					if (comp(*first1, *first0)) {
+						*out = ::std::move(*first1); //
+						++out;
+						++first1;
+
+						if (first1 == last1) {
+							break;
+						}
+					} else {
+						*out = ::std::move(*first0);
+						++out;
+						++first0;
+
+						if (first0 == last0) {
+							break;
+						}
+					}
+				}
+			}
+
+			for (; first0 != last0;) {
+				*out = ::std::move(*first0);
+				++out;
+				++first0;
+			}
+
+			for (; first1 != last1;) {
+				*out = ::std::move(*first1);
+				++out;
+				++first1;
+			}
+		} else { // else if constexpr (std::is_assignable<T, T>::value)
+			if (first0 != last0 && first1 != last1) {
+				for (;;) {
+					if (comp(*first1, *first0)) {
+						sort::iter_swap(out, first1); //
+						++out;
+						++first1;
+
+						if (first1 == last1) {
+							break;
+						}
+					} else {
+						sort::iter_swap(out, first0);
+						++out;
+						++first0;
+
+						if (first0 == last0) {
+							break;
+						}
+					}
+				}
+			}
+
+			for (; first0 != last0;) {
+				sort::iter_swap(out, first0);
+				++out;
+				++first0;
+			}
+
+			for (; first1 != last1;) {
+				sort::iter_swap(out, first1);
+				++out;
+				++first1;
+			}
+		}
+
+		return out;
+	}
+
+	// WARNING: this algorithm is only ok for sorting up to 256 items! end-start <= 256
+	template<typename It, typename Compare = std::less<>>
+	constexpr void small_merge_sort(It start, It end, Compare comp = Compare{})
+	{
+		using value_type = sort::iter_value_t<It>;
+		std::array<value_type, 256> buffer;
+
+		size_t diff = end - start;
+		diff >>= 2; // where we stop
+		size_t stride = 1;
+		for (;;) {
+			auto it = start;
+			for (; it + ((4 * stride) - 1) < end;) { // 1 -> 2 -> 4,  4 -> 8 -> 16, 16 -> 32 -> 64, 64 -> 128 -> 256
+				auto m0 = it + stride;
+				auto l0 = it + (2 * stride);
+				auto m1 = it + (3 * stride);
+				auto l1 = it + (4 * stride);
+				auto b0 = buffer.data();
+				sort::merge(it, m0, m0, l0, b0, comp);
+
+				auto b1 = buffer.data() + (2 * stride);
+
+				sort::merge(l0, m1, m1, l1, b1, comp);
+
+				sort::merge(buffer.data(), b0, b1, buffer.data() + (4 * stride), it, comp);
+
+				it += (stride * 4);
+			}
+
+			if (it < end) { //
+				// insertion_sort(it, end, comp);
+				// size_t idx = 0;
+				auto m0      = it + stride;
+				m0           = m0 < end ? m0 : end;
+				auto l0      = it + (2 * stride);
+				l0           = l0 < end ? l0 : end;
+				auto m1      = it + (3 * stride);
+				m1           = m1 < end ? m1 : end;
+				auto it_next = it + (4 * stride);
+				it_next      = it_next < end ? it_next : end;
+
+				auto b0      = buffer.data();
+				auto lhs_out = sort::merge(it, m0, m0, l0, b0, comp);
+
+				auto rhs_out = sort::merge(l0, m1, m1, it_next, lhs_out, comp);
+
+				sort::merge(buffer.data(), lhs_out, lhs_out, rhs_out, it, comp);
+			}
+
+			stride *= 2;
+
+			if (stride >= diff)
+				break;
 		}
 	}
 
@@ -578,7 +750,8 @@ namespace sort {
 	release_force_inline constexpr void counting_sort_byte_shift(
 					It start, It end, ExtractKey extract_key, counting_sort_bytes remaining)
 	{
-		using key_type = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
+		using value_type = sort::iter_value_t<It>;
+		using key_type   = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
 		static_assert(std::is_integral<key_type>::value, "extract_key must return an integral type!");
 
 		uint32_t bit_shift = (remaining.idxs & 0xff) * 8;
@@ -674,23 +847,35 @@ namespace sort {
 		if (remaining.bytes) {
 			for (uint32_t i = 0; i < 256; i++) {
 				size_t items = (start_end[i + 1] - start_end[i]);
-				if (items <= insertion_sort_threshold) {
-					sort::insertion_sort(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-				} else if (items <= intro_sort_threshold) {
-					sort::make_heap(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-					sort::sort_heap(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
+				if constexpr (::std::is_default_constructible<value_type>::value) {
+					if (items <= small_merge_sort_threshold) {
+						sort::small_merge_sort(start + start_end[i], start + start_end[i + 1],
+										[](const auto& lhs, const auto& rhs) {
+											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										});
+					} else {
+						sort::counting_sort_byte_shift(
+										start + start_end[i], start + start_end[i + 1], extract_key, remaining);
+					}
 				} else {
-					sort::counting_sort_byte_shift(
-									start + start_end[i], start + start_end[i + 1], extract_key, remaining);
+					if (items <= insertion_sort_threshold) {
+						sort::insertion_sort(start + start_end[i], start + start_end[i + 1],
+										[](const auto& lhs, const auto& rhs) {
+											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										});
+					} else if (items <= intro_sort_threshold) {
+						sort::make_heap(start + start_end[i], start + start_end[i + 1],
+										[](const auto& lhs, const auto& rhs) {
+											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										});
+						sort::sort_heap(start + start_end[i], start + start_end[i + 1],
+										[](const auto& lhs, const auto& rhs) {
+											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										});
+					} else {
+						sort::counting_sort_byte_shift(
+										start + start_end[i], start + start_end[i + 1], extract_key, remaining);
+					}
 				}
 			}
 		}
@@ -699,7 +884,8 @@ namespace sort {
 	template<typename It, typename ExtractKey>
 	release_force_inline constexpr void counting_sort_byte_shift_dynamic(It start, It end, ExtractKey extract_key)
 	{
-		using key_type = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
+		using value_type = sort::iter_value_t<It>;
+		using key_type   = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
 		static_assert(std::is_integral<key_type>::value, "extract_key must return an integral type!");
 
 		size_t counts[256] = {0};
@@ -832,22 +1018,35 @@ namespace sort {
 		if (next.bytes) {
 			for (uint32_t i = 0; i < 256; i++) {
 				size_t items = (start_end[i + 1] - start_end[i]);
-				if (items <= insertion_sort_threshold) {
-					sort::insertion_sort(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-				} else if (items <= intro_sort_threshold) {
-					sort::make_heap(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-					sort::sort_heap(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
+				if constexpr (::std::is_default_constructible<value_type>::value) {
+					if (items <= small_merge_sort_threshold) {
+						sort::small_merge_sort(start + start_end[i], start + start_end[i + 1],
+										[](const auto& lhs, const auto& rhs) {
+											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										});
+					} else {
+						sort::counting_sort_byte_shift(
+										start + start_end[i], start + start_end[i + 1], extract_key, next);
+					}
 				} else {
-					sort::counting_sort_byte_shift(start + start_end[i], start + start_end[i + 1], extract_key, next);
+					if (items <= insertion_sort_threshold) {
+						sort::insertion_sort(start + start_end[i], start + start_end[i + 1],
+										[](const auto& lhs, const auto& rhs) {
+											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										});
+					} else if (items <= intro_sort_threshold) {
+						sort::make_heap(start + start_end[i], start + start_end[i + 1],
+										[](const auto& lhs, const auto& rhs) {
+											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										});
+						sort::sort_heap(start + start_end[i], start + start_end[i + 1],
+										[](const auto& lhs, const auto& rhs) {
+											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										});
+					} else {
+						sort::counting_sort_byte_shift(
+										start + start_end[i], start + start_end[i + 1], extract_key, next);
+					}
 				}
 			}
 		}
@@ -896,6 +1095,7 @@ namespace sort {
 	template<typename It, typename ExtractKey>
 	constexpr void counting_sort_byte_shift_flat(It start, It end, ExtractKey extract_key)
 	{
+		using value_type = sort::iter_value_t<It>;
 		using key_type   = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
 		using index_type = size_t;
 
@@ -1160,13 +1360,22 @@ namespace sort {
 					size_t   end_offset   = stack_data[(depth * start_end_indexs) + i + 1];
 					size_t   items        = end_offset - start_offset;
 					// skip where we have 0 items to process
-					if (items <= insertion_sort_threshold) {
+					if (::std::is_default_constructible<value_type>::value &&
+									items <= small_merge_sort_threshold) { // should optimize away
+						// this should "bubble" up, marking this region as definitely sorted
+						sort::small_merge_sort(start_it + start_offset, start_it + end_offset,
+										[](const auto& lhs, const auto& rhs) {
+											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										});
+					} else if (!::std::is_default_constructible<value_type>::value &&
+									items <= insertion_sort_threshold) { // should optimize away
 						// this should "bubble" up, marking this region as definitely sorted
 						sort::insertion_sort(start_it + start_offset, start_it + end_offset,
 										[](const auto& lhs, const auto& rhs) {
 											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
 										});
-					} else if (items <= intro_sort_threshold) {
+					} else if (!::std::is_default_constructible<value_type>::value &&
+									items <= intro_sort_threshold) { // should optimize away
 						// this should "bubble" up, marking this region as definitely sorted
 						sort::make_heap(start_it + start_offset, start_it + end_offset,
 										[](const auto& lhs, const auto& rhs) {
@@ -1400,11 +1609,21 @@ namespace sort {
 		using idxs     = std::index_sequence<Idxs...>;
 	};
 
+	template<size_t... Idxs>
+	constexpr auto make_reversed_index_sequence(std::index_sequence<Idxs...>)
+					-> std::index_sequence<((sizeof...(Idxs) - 1) - Idxs)...>
+	{
+		return {};
+	}
+
 	template<typename It, typename ExtractKey, size_t Idx, size_t... Idxs, typename... Deferred>
 	constexpr void counting_sort_get_impl_recursive(It start, It end, ExtractKey extract_key,
 					std::index_sequence<Idx, Idxs...>, parameter_list<Deferred...>)
 	{
-		using key_type = sort::remove_cvref_t<decltype(::std::get<Idx>(ExtractKey{}(*std::declval<It>())))>;
+		using value_type   = sort::iter_value_t<It>;
+		using extract_type = decltype(ExtractKey{}(*std::declval<It>()));
+		using key_type     = sort::remove_cvref_t<decltype(::std::get<Idx>(
+                        ExtractKey{}(*std::declval<It>())))>; // this works for both tuples and arrays
 
 		if constexpr (is_tuple<key_type>::value) {
 			if constexpr (sizeof...(Idxs)) {
@@ -1436,7 +1655,7 @@ namespace sort {
 			using max_key_type = decltype(sort::treat_as_unsigned_rshifted(std::declval<key_type>(), 0));
 #endif
 
-			max_key_type mx    = max_key_type{1};
+			max_key_type mx = max_key_type{1};
 			auto split = sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 			if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 				if constexpr (sizeof...(Idxs)) {
@@ -1453,27 +1672,21 @@ namespace sort {
 									typename first_deferred::idxs{}, popped_list{});
 				}
 			}
-		}
-		else if constexpr (is_array<key_type>::value) {
+		} else if constexpr (is_array<key_type>::value) {
 			if constexpr (sizeof...(Idxs)) {
 				return counting_sort_get_impl_recursive(
-								start, end,
-								[](const auto& v) {
-									return ::std::get<(std::tuple_size<key_type>::value - 1) - Idx>(ExtractKey{}(v));
-								},
-								std::make_index_sequence<std::tuple_size<key_type>::value>{},
+								start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
+								sort::make_reversed_index_sequence(
+												std::make_index_sequence<std::tuple_size<key_type>::value>{}),
 								parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{});
 			} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
 				return counting_sort_get_impl_recursive(
-								start, end,
-								[](const auto& v) {
-									return ::std::get<(std::tuple_size<key_type>::value - 1) - Idx>(ExtractKey{}(v));
-								},
-								std::make_index_sequence<std::tuple_size<key_type>::value>{},
+								start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
+								sort::make_reversed_index_sequence(
+												std::make_index_sequence<std::tuple_size<key_type>::value>{}),
 								parameter_list<Deferred...>{});
 			}
-		}
-		else {
+		} else {
 #if defined __has_include
 #if __has_include(<bitset>)
 			using max_key_type = typename std::conditional<is_bitset<key_type>::value, key_type,
@@ -1538,8 +1751,8 @@ namespace sort {
 						key_byte = ((k >> (x * 8)) & 0xff);
 					}
 
-					mns[x] = key_byte < mns[x] ? key_byte : mns[x];
-					mxs[x] = key_byte > mxs[x] ? key_byte : mxs[x];
+					mns[x]          = key_byte < mns[x] ? key_byte : mns[x];
+					mxs[x]          = key_byte > mxs[x] ? key_byte : mxs[x];
 					keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
 					last_key[x]     = key_byte;
 
@@ -1898,13 +2111,19 @@ namespace sort {
 					size_t   end_offset   = stack_data[(depth * start_end_indexs) + i + 1];
 					size_t   items        = end_offset - start_offset;
 					// skip where we have 0 items to process
-					if (items <= insertion_sort_threshold) {
+					if (::std::is_default_constructible<value_type>::value && items <= small_merge_sort_threshold) {
+						sort::small_merge_sort(start_it + start_offset, start_it + end_offset,
+										[](const auto& lhs, const auto& rhs) {
+											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										});
+					} else if (::std::is_default_constructible<value_type>::value &&
+									items <= insertion_sort_threshold) {
 						// this should "bubble" up, marking this region as definitely sorted
 						sort::insertion_sort(start_it + start_offset, start_it + end_offset,
 										[](const auto& lhs, const auto& rhs) {
 											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
 										});
-					} else if (items <= intro_sort_threshold) {
+					} else if (::std::is_default_constructible<value_type>::value && items <= intro_sort_threshold) {
 						// this should "bubble" up, marking this region as definitely sorted
 						sort::make_heap(start_it + start_offset, start_it + end_offset,
 										[](const auto& lhs, const auto& rhs) {
@@ -1937,10 +2156,10 @@ namespace sort {
 						mn = ~key_type{0};
 						mx = key_type{0};
 						// do normal count
-						
+
 						// could index using next_depth, or anything,
 						// we don't need to "remember" for long
-						last_key[0]     = 0; 
+						last_key[0]     = 0;
 						keys_ordered[0] = true;
 
 						It end_it = start_it + end_offset;
@@ -2023,9 +2242,11 @@ namespace sort {
 							auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
 							switch (diff) {
 							case 1: {
-								auto it = sort::partition_branchless(start_it + start_offset, end_it, [&mx](const auto& v) {
-									return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
-								});
+								auto it = sort::partition_branchless(
+												start_it + start_offset, end_it, [&mx](const auto& v) {
+													return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) <
+														   mx;
+												});
 								if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 									if constexpr (sizeof...(Idxs)) {
 										counting_sort_get_impl_recursive(start_it + start_offset, it, extract_key,
@@ -2175,9 +2396,11 @@ namespace sort {
 								auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
 								switch (diff) {
 								case 1: {
-									auto it = sort::partition_branchless(start_it + start_offset, end_it, [&mx](const auto& v) {
-										return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
-									});
+									auto it = sort::partition_branchless(
+													start_it + start_offset, end_it, [&mx](const auto& v) {
+														return sort::treat_as_unsigned(
+																			   ::std::get<Idx>(ExtractKey{}(v))) < mx;
+													});
 									if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 										if constexpr (sizeof...(Idxs)) {
 											counting_sort_get_impl_recursive(start_it + start_offset, it, extract_key,
@@ -2329,7 +2552,7 @@ namespace sort {
 			for (size_t i = 0; i < ::std::tuple_size<key_type>::value; i++) {
 				partitions = (partitions_0 * partitions) > partitions ? (partitions_0 * partitions) : partitions;
 			}
-			return partitions;
+			return partitions * (partitions_0 != 0);
 #if defined __has_include
 #if __has_include(<bitset>)
 		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) > 1) {
@@ -2349,8 +2572,7 @@ namespace sort {
 		}
 	}
 
-	template<typename... key_types> 
-	constexpr size_t partition_count(std::tuple<key_types...>)
+	template<typename... key_types> constexpr size_t partition_count(std::tuple<key_types...>)
 	{
 		size_t partitions = 1;
 		((partitions = (partition_count<key_types>() * partitions) > partitions
@@ -2394,40 +2616,56 @@ namespace sort {
 		constexpr size_t potential_partitions = partition_count<key_type>();
 		auto             f                    = get_unwrapped(start);
 		auto             l                    = get_unwrapped(end);
-		if constexpr ((potential_partitions == 0 ||
-						potential_partitions > 16) && std::is_same<typename ::std::iterator_traits<It>::iterator_category,
-									  ::std::random_access_iterator_tag>::value) {
+		if constexpr ((potential_partitions == 0 || potential_partitions > 16) &&
+						std::is_same<typename ::std::iterator_traits<It>::iterator_category,
+										::std::random_access_iterator_tag>::value) {
 			auto item_count = l - f;
-			if (item_count <= insertion_sort_threshold) {
-				if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
-								::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
-					return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) { return lhs < rhs; });
-				} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-									 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
-					return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) { return lhs > rhs; });
-				} else {
-					return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) {
-						return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-					});
+			if constexpr (::std::is_default_constructible<key_type>::value) {
+				if (item_count <= small_merge_sort_threshold) {
+					if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
+									::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+						return sort::small_merge_sort(f, l, [](const auto& lhs, const auto& rhs) { return lhs < rhs; });
+					} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+										 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+						return sort::small_merge_sort(f, l, [](const auto& lhs, const auto& rhs) { return lhs > rhs; });
+					} else {
+						return sort::small_merge_sort(f, l, [](const auto& lhs, const auto& rhs) {
+							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+						});
+					}
 				}
-			}
+			} else {
+				if (item_count <= insertion_sort_threshold) {
+					if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
+									::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+						return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) { return lhs < rhs; });
+					} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+										 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+						return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) { return lhs > rhs; });
+					} else {
+						return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) {
+							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+						});
+					}
+				}
 
-			if (item_count <= intro_sort_threshold) {
-				if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
-								::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
-					sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs < rhs; });
-					return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs < rhs; });
-				} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-									 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
-					sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs > rhs; });
-					return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs > rhs; });
-				} else {
-					sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) {
-						return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-					});
-					return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) {
-						return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-					});
+				if (item_count <= intro_sort_threshold) {
+					if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
+									::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+						sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs < rhs; });
+						return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs < rhs; });
+					} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+										 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+						sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs > rhs; });
+						return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) { return lhs > rhs; });
+					} else {
+						sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) {
+							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+						});
+						return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) {
+							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+						});
+					}
 				}
 			}
 		}
@@ -2448,6 +2686,11 @@ namespace sort {
 			// partition puts things that return true first...but counting sort should treat this as a value so...we'll
 			// flip the extract function to keep the semantics the same as expected
 			sort::partition_branchless(f, l, [](const auto& value) { return !ExtractKey{}(value); });
+		} else if constexpr (is_array<key_type>::value) {
+			sort::counting_sort_get_impl_recursive(f, l, extract_key,
+							sort::make_reversed_index_sequence(
+											std::make_index_sequence<std::tuple_size<key_type>::value>{}),
+							parameter_list<>{});
 		} else if constexpr (::std::is_integral<key_type>::value) {
 			if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
 							::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
@@ -2485,7 +2728,9 @@ namespace sort {
 		using T = sort::iter_value_t<It>;
 		auto i  = first;
 		if constexpr ((std::is_arithmetic<T>::value || std::is_same<T, bool>::value) &&
-						std::is_same<sort::remove_cvref_t<decltype(*first)>, T>::value) { //this second line is to gaurd against proxy references / reference wrappers
+						std::is_same<sort::remove_cvref_t<decltype(*first)>,
+										T>::value) { // this second line is to gaurd against proxy references /
+													 // reference wrappers
 			for (; i != last; ++i) { // performs about 25% better than below with simple types like below
 				auto j = i;
 				for (; j != first;) {
@@ -2498,7 +2743,7 @@ namespace sort {
 			}
 		} else if constexpr (std::is_move_constructible<T>::value) {
 			for (; i != last; ++i) {
-				auto j  = i;
+				auto j = i;
 				auto h = i;
 				T    tmp(std::move(*j));
 
@@ -2510,7 +2755,7 @@ namespace sort {
 				}
 				*h = std::move(tmp);
 			}
-		} else if constexpr (std::is_assignable<T,T>::value) {
+		} else if constexpr (std::is_assignable<T, T>::value) {
 			for (; i != last; ++i) {
 				auto j = i;
 				for (; j != first;) {
