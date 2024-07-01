@@ -857,7 +857,9 @@ namespace sort {
 		if (remaining.bytes) {
 			for (uint32_t i = 0; i < 256; i++) {
 				size_t items = (start_end[i + 1] - start_end[i]);
-				if constexpr (::std::is_default_constructible<value_type>::value) {
+				if constexpr (::std::is_default_constructible<value_type>::value &&
+								std::is_same<typename ::std::iterator_traits<It>::iterator_category,
+												::std::random_access_iterator_tag>::value) {
 					if (items <= small_merge_sort_threshold) {
 						sort::small_merge_sort(start + start_end[i], start + start_end[i + 1],
 										[](const auto& lhs, const auto& rhs) {
@@ -1028,7 +1030,9 @@ namespace sort {
 		if (next.bytes) {
 			for (uint32_t i = 0; i < 256; i++) {
 				size_t items = (start_end[i + 1] - start_end[i]);
-				if constexpr (::std::is_default_constructible<value_type>::value) {
+				if constexpr (::std::is_default_constructible<value_type>::value &&
+								std::is_same<typename ::std::iterator_traits<It>::iterator_category,
+												::std::random_access_iterator_tag>::value) {
 					if (items <= small_merge_sort_threshold) {
 						sort::small_merge_sort(start + start_end[i], start + start_end[i + 1],
 										[](const auto& lhs, const auto& rhs) {
@@ -1183,7 +1187,7 @@ namespace sort {
 					keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
 					last_key[x]     = key_byte;
 
-					++stack_data[count_indexs * x + key_byte];
+					++stack_data[(count_indexs * x) + key_byte];
 				}
 			}
 
@@ -1304,19 +1308,19 @@ namespace sort {
 			uint32_t partitions = 0;
 			{ // convert counts to prefix sum
 				size_t   idx          = 0;
-				size_t   total        = 0;
+				size_t   total        = 0; // our paritioning start->end is only good for the current depth (0)
 				uint16_t current_byte = (next.idxs >> (depth * 8)) & 0xff;
 				for (; idx < 256;) {
-					size_t count = stack_data[(current_byte * count_indexs) + idx];
+					size_t count = stack_data[(current_byte * count_indexs) +
+											  idx]; // so we take the data for the count here
 
-					size_t old_count = count;
-					partitions += old_count > 0;
+					partitions += count > 0;
 					counts[idx]     = total;
-					stack_data[idx] = total;
-					total += old_count;
+					stack_data[idx] = total; // and make it a running total here
+					total += count;
 					idx++;
 				}
-				stack_data[256] = total;
+				stack_data[256] = total; // last we append the actual total at the end here
 			}
 
 			switch (partitions) {
@@ -1365,27 +1369,27 @@ namespace sort {
 			for (;;) {
 				//  the recursion step
 				for (; progress[depth] < 256; ++progress[depth]) {
-					uint16_t i            = progress[depth];
-					size_t   start_offset = stack_data[(depth * start_end_indexs) + i];
-					size_t   end_offset   = stack_data[(depth * start_end_indexs) + i + 1];
-					size_t   items        = end_offset - start_offset;
+					uint16_t       progress_idx   = progress[depth];
+					size_t         start_offset   = stack_data[(depth * start_end_indexs) + progress_idx];
+					size_t         end_offset     = stack_data[(depth * start_end_indexs) + progress_idx + 1];
+					size_t         items          = end_offset - start_offset;
+					constexpr bool can_small_sort = ::std::is_default_constructible<value_type>::value &&
+													std::is_same<typename ::std::iterator_traits<It>::iterator_category,
+																	::std::random_access_iterator_tag>::value;
 					// skip where we have 0 items to process
-					if (::std::is_default_constructible<value_type>::value &&
-									items <= small_merge_sort_threshold) { // should optimize away
+					if (false && can_small_sort && items <= small_merge_sort_threshold) { // should optimize away
 						// this should "bubble" up, marking this region as definitely sorted
 						sort::small_merge_sort(start_it + start_offset, start_it + end_offset,
 										[](const auto& lhs, const auto& rhs) {
 											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
 										});
-					} else if (!::std::is_default_constructible<value_type>::value &&
-									items <= insertion_sort_threshold) { // should optimize away
+					} else if (items <= insertion_sort_threshold) { // should optimize away
 						// this should "bubble" up, marking this region as definitely sorted
 						sort::insertion_sort(start_it + start_offset, start_it + end_offset,
 										[](const auto& lhs, const auto& rhs) {
 											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
 										});
-					} else if (!::std::is_default_constructible<value_type>::value &&
-									items <= intro_sort_threshold) { // should optimize away
+					} else if (items <= intro_sort_threshold) { // should optimize away
 						// this should "bubble" up, marking this region as definitely sorted
 						sort::make_heap(start_it + start_offset, start_it + end_offset,
 										[](const auto& lhs, const auto& rhs) {
@@ -1561,9 +1565,9 @@ namespace sort {
 
 						its[next_depth] = start_it + start_offset;
 
-						start_it = its[next_depth];
 						if (!keys_ordered) {
-							size_t sorted_count = 0;
+							auto   next_start_it = its[next_depth];
+							size_t sorted_count  = 0;
 							do {
 								for (size_t x = 0; x < 256; x++) {
 									size_t s = counts[x];
@@ -1573,12 +1577,12 @@ namespace sort {
 									// I'm not convinced that's a good idea, plus this is easy to program anyway
 									sorted_count += (e - s);
 									for (; s < e; s++) {
-										It      swap_left = start_it + s;
+										It      swap_left = next_start_it + s;
 										It      swap_target;
 										uint8_t key = (uint8_t)sort::treat_as_unsigned_rshifted(
 														extract_key(*swap_left), bit_shift);
 										size_t target_idx = counts[key];
-										swap_target       = start_it + target_idx;
+										swap_target       = next_start_it + target_idx;
 
 										sort::swap_branchless_unconditional(*swap_left, *swap_target);
 										counts[key] += 1;
@@ -1590,7 +1594,7 @@ namespace sort {
 						// we don't need to recurse if the # of items matches, or we're at the max depth already
 						if (partitions == items || (next_depth >= (next.bytes - 1)))
 							continue;
-
+						// progress[depth] += 1;
 						progress[next_depth] = 0;
 						break; // we'll go deeper
 					}
@@ -1598,8 +1602,11 @@ namespace sort {
 
 				if (depth == 0 && progress[0] >= 256)
 					break;
-				progress[depth] += 1;
-				depth += (progress[depth] < 256) ? -1 : 1;
+				// progress[depth] += 1;
+				bool deeper = (progress[depth] < 256);
+				depth += deeper ? 1 : -1;
+				progress[depth] += !deeper;
+				start_it = its[depth];
 			}
 		}
 	}
@@ -2116,24 +2123,26 @@ namespace sort {
 			for (;;) {
 				//  the recursion step
 				for (; progress[depth] < 256; ++progress[depth]) {
-					uint16_t i            = progress[depth];
-					size_t   start_offset = stack_data[(depth * start_end_indexs) + i];
-					size_t   end_offset   = stack_data[(depth * start_end_indexs) + i + 1];
-					size_t   items        = end_offset - start_offset;
+					uint16_t       progress_idx   = progress[depth];
+					size_t         start_offset   = stack_data[(depth * start_end_indexs) + progress_idx];
+					size_t         end_offset     = stack_data[(depth * start_end_indexs) + progress_idx + 1];
+					size_t         items          = end_offset - start_offset;
+					constexpr bool can_small_sort = ::std::is_default_constructible<value_type>::value &&
+													std::is_same<typename ::std::iterator_traits<It>::iterator_category,
+																	::std::random_access_iterator_tag>::value;
 					// skip where we have 0 items to process
-					if (::std::is_default_constructible<value_type>::value && items <= small_merge_sort_threshold) {
+					if (can_small_sort && items <= small_merge_sort_threshold) {
 						sort::small_merge_sort(start_it + start_offset, start_it + end_offset,
 										[](const auto& lhs, const auto& rhs) {
 											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
 										});
-					} else if (::std::is_default_constructible<value_type>::value &&
-									items <= insertion_sort_threshold) {
+					} else if (!can_small_sort && items <= insertion_sort_threshold) {
 						// this should "bubble" up, marking this region as definitely sorted
 						sort::insertion_sort(start_it + start_offset, start_it + end_offset,
 										[](const auto& lhs, const auto& rhs) {
 											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
 										});
-					} else if (::std::is_default_constructible<value_type>::value && items <= intro_sort_threshold) {
+					} else if (!can_small_sort && items <= intro_sort_threshold) {
 						// this should "bubble" up, marking this region as definitely sorted
 						sort::make_heap(start_it + start_offset, start_it + end_offset,
 										[](const auto& lhs, const auto& rhs) {
@@ -2474,10 +2483,9 @@ namespace sort {
 
 						its[next_depth] = start_it + start_offset;
 
-						start_it = its[next_depth];
-
 						size_t sorted_count = 0;
 						if (!keys_ordered[0]) {
+							auto next_start_it = its[next_depth];
 							do {
 								for (size_t x = 0; x < 256; x++) {
 									size_t s = counts[x];
@@ -2487,14 +2495,14 @@ namespace sort {
 									// I'm not convinced that's a good idea, plus this is easy to program anyway
 									sorted_count += (e - s);
 									for (; s < e; s++) {
-										It      swap_left = start_it + s;
+										It      swap_left = next_start_it + s;
 										It      swap_target;
 										uint8_t key = (sort::treat_as_unsigned(
 																	   ::std::get<Idx>(extract_key(*swap_left))) >>
 																	  bit_shift) &
 													  0xff;
 										size_t target_idx = counts[key];
-										swap_target       = start_it + target_idx;
+										swap_target       = next_start_it + target_idx;
 
 										sort::swap_branchless_unconditional(*swap_left, *swap_target);
 										counts[key] += 1;
@@ -2517,9 +2525,13 @@ namespace sort {
 
 				if (depth == 0 && progress[0] >= 256) //
 					break;
-				progress[depth] += 1;
+				bool deeper = (progress[depth] < 256);
+				depth += deeper ? 1 : -1;
+				progress[depth] += !deeper;
+				start_it = its[depth];
 
-				depth += (progress[depth] < 256) ? -1 : 1;
+				//progress[depth] += 1;
+				//depth += (progress[depth] < 256) ? -1 : 1;
 			}
 		}
 	}
@@ -2630,7 +2642,9 @@ namespace sort {
 						std::is_same<typename ::std::iterator_traits<It>::iterator_category,
 										::std::random_access_iterator_tag>::value) {
 			auto item_count = l - f;
-			if constexpr (::std::is_default_constructible<key_type>::value) {
+			if constexpr (::std::is_default_constructible<key_type>::value &&
+							std::is_same<typename ::std::iterator_traits<It>::iterator_category,
+											::std::random_access_iterator_tag>::value) {
 				if (item_count <= small_merge_sort_threshold) {
 					if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
 									::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
@@ -3071,12 +3085,22 @@ namespace sort {
 	template<typename It, typename Compare>
 	constexpr void intro_sort(It first, It last, Compare comp, size_t heapthresh)
 	{
+		using value_type = sort::iter_value_t<It>;
 		for (;;) {
 			size_t count = sort::distance(first, last);
-
-			if (count <= 32) {
-				sort::insertion_sort(first, last, comp);
-				return;
+			// TODO: find more cases where this makes sense to do
+			if constexpr (::std::is_default_constructible<value_type>::value &&
+							std::is_same<typename ::std::iterator_traits<It>::iterator_category,
+											::std::random_access_iterator_tag>::value) {
+				if (count <= small_merge_sort_threshold) { // this performs better
+					sort::small_merge_sort(first, last, comp);
+					return;
+				}
+			} else {
+				if (count <= 32) {
+					sort::insertion_sort(first, last, comp);
+					return;
+				}
 			}
 
 			if (heapthresh <= 0) {
@@ -3093,29 +3117,6 @@ namespace sort {
 				first = mid.second;
 			} else {
 				sort::intro_sort(mid.second, last, comp, heapthresh);
-				last = mid.first;
-			}
-		}
-	}
-
-	template<typename It, typename Compare>
-	constexpr void intro_small_merge_sort(It first, It last, Compare comp)
-	{
-		for (;;) {
-			size_t count = sort::distance(first, last);
-
-			if (count <= small_merge_sort_threshold) {
-				sort::small_merge_sort(first, last, comp);
-				return;
-			}
-
-			auto mid   = sort::partition_by_median_guess_unchecked(first, last, comp);
-
-			if (mid.first - first < last - mid.second) {
-				sort::intro_small_merge_sort(first, mid.first, comp);
-				first = mid.second;
-			} else {
-				sort::intro_small_merge_sort(mid.second, last, comp);
 				last = mid.first;
 			}
 		}
