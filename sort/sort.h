@@ -510,7 +510,8 @@ namespace sort {
 		size_t stride = 1;
 		for (;;) {
 			auto it = start;
-			for (; it + ((4 * stride) - 1) < end;) { // 1 -> 2 -> 4,  4 -> 8 -> 16, 16 -> 32 -> 64, 64 -> 128 -> 256
+			// it + ((4 * stride) - 1) < end
+			for (; (end - it) >= (4 * stride);) { // 1 -> 2 -> 4,  4 -> 8 -> 16, 16 -> 32 -> 64, 64 -> 128 -> 256
 				auto m0 = it + stride;
 				auto l0 = it + (2 * stride);
 				auto m1 = it + (3 * stride);
@@ -522,35 +523,44 @@ namespace sort {
 
 				sort::merge(l0, m1, m1, l1, b1, comp);
 
-				sort::merge(buffer.data(), b0, b1, buffer.data() + (4 * stride), it, comp);
+				sort::merge(buffer.data(), b1, b1, buffer.data() + (4 * stride), it, comp);
 
 				it += (stride * 4);
 			}
 
 			if (it < end) { //
-				// insertion_sort(it, end, comp);
-				// size_t idx = 0;
-				auto m0      = it + stride;
-				m0           = m0 < end ? m0 : end;
-				auto l0      = it + (2 * stride);
-				l0           = l0 < end ? l0 : end;
-				auto m1      = it + (3 * stride);
-				m1           = m1 < end ? m1 : end;
-				auto it_next = it + (4 * stride);
-				it_next      = it_next < end ? it_next : end;
+				size_t remaining = (end - it);
+				auto   m0        = remaining >= stride ? it + stride : end;
+				auto   l0        = remaining >= (2 * stride) ? it + (2 * stride) : end;
+				auto   m1        = remaining >= (3 * stride) ? it + (3 * stride) : end;
+				auto   l1        = remaining >= (4 * stride) ? it + (4 * stride) : end;
 
 				auto b0      = buffer.data();
 				auto lhs_out = sort::merge(it, m0, m0, l0, b0, comp);
 
-				auto rhs_out = sort::merge(l0, m1, m1, it_next, lhs_out, comp);
+				auto rhs_out = sort::merge(l0, m1, m1, l1, lhs_out, comp);
 
 				sort::merge(buffer.data(), lhs_out, lhs_out, rhs_out, it, comp);
 			}
 
 			stride *= 2;
 
-			if (stride >= diff)
+			if (stride >= diff) {
+				it               = start;
+				size_t remaining = (end - it);
+				auto   m0        = remaining >= stride ? it + stride : end;
+				auto   l0        = remaining >= (2 * stride) ? it + (2 * stride) : end;
+				auto   m1        = remaining >= (3 * stride) ? it + (3 * stride) : end;
+				auto   l1        = remaining >= (4 * stride) ? it + (4 * stride) : end;
+
+				auto b0      = buffer.data();
+				auto lhs_out = sort::merge(it, m0, m0, l0, b0, comp);
+
+				auto rhs_out = sort::merge(l0, m1, m1, l1, lhs_out, comp);
+
+				sort::merge(buffer.data(), lhs_out, lhs_out, rhs_out, it, comp);
 				break;
+			}
 		}
 	}
 
