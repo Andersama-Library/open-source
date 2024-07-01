@@ -3088,6 +3088,29 @@ namespace sort {
 		}
 	}
 
+	template<typename It, typename Compare>
+	constexpr void intro_small_merge_sort(It first, It last, Compare comp)
+	{
+		for (;;) {
+			size_t count = sort::distance(first, last);
+
+			if (count <= small_merge_sort_threshold) {
+				sort::small_merge_sort(first, last, comp);
+				return;
+			}
+
+			auto mid   = sort::partition_by_median_guess_unchecked(first, last, comp);
+
+			if (mid.first - first < last - mid.second) {
+				sort::intro_small_merge_sort(first, mid.first, comp);
+				first = mid.second;
+			} else {
+				sort::intro_small_merge_sort(mid.second, last, comp);
+				last = mid.first;
+			}
+		}
+	}
+
 	enum sorting_algorithms {
 		s_partition,
 		s_bubble_sort,
