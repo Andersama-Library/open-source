@@ -506,7 +506,7 @@ namespace sort {
 		std::array<value_type, 256> buffer;
 
 		size_t diff = end - start;
-		diff >>= 2; // where we stop
+		diff >>= 1; // where we stop
 		size_t stride = 1;
 		for (;;) {
 			auto it = start;
@@ -545,22 +545,8 @@ namespace sort {
 
 			stride *= 2;
 
-			if (stride >= diff) {
-				it               = start;
-				size_t remaining = (end - it);
-				auto   m0        = remaining >= stride ? it + stride : end;
-				auto   l0        = remaining >= (2 * stride) ? it + (2 * stride) : end;
-				auto   m1        = remaining >= (3 * stride) ? it + (3 * stride) : end;
-				auto   l1        = remaining >= (4 * stride) ? it + (4 * stride) : end;
-
-				auto b0      = buffer.data();
-				auto lhs_out = sort::merge(it, m0, m0, l0, b0, comp);
-
-				auto rhs_out = sort::merge(l0, m1, m1, l1, lhs_out, comp);
-
-				sort::merge(buffer.data(), lhs_out, lhs_out, rhs_out, it, comp);
+			if (stride >= diff)
 				break;
-			}
 		}
 	}
 
