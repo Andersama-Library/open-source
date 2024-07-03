@@ -642,6 +642,18 @@ namespace sort {
 		uint8_t  bytes = {};
 	};
 
+	// NOTE: only exists because I found a bug in MSVC AND CLANG codegen...
+	template<typename T> always_force_inline constexpr auto minimum_unsigned_value()
+	{
+		using unsigned_type     = typename ::std::make_unsigned<T>::type;
+		unsigned_type min_value = 0;
+		min_value               = ~min_value;
+		min_value               = min_value >> 1u;
+		min_value               = ~min_value; //{~((~(unsigned_type{0})) >> 1)};
+		// unsigned_type min_value = ~((~(unsigned_type{0})) >> 1u);
+		return min_value;
+	}
+
 	template<typename T> always_force_inline constexpr auto treat_as_unsigned_rshifted(T v, uint32_t shift)
 	{
 #if defined(cplusplus_version_20)
@@ -680,9 +692,10 @@ namespace sort {
 #endif
 #endif
 						if constexpr (::std::is_integral<T>::value && ::std::is_signed<T>::value) {
-			constexpr typename ::std::make_unsigned<T>::type min_value = {
-							~(~typename ::std::make_unsigned<T>::type{0} >> 1)};
-			return ((typename ::std::make_unsigned<T>::type)v + min_value) >> shift;
+			using unsigned_type = typename ::std::make_unsigned<T>::type;
+			// constexpr unsigned_type min_value = {~((~unsigned_type{0}) >> 1)};
+			constexpr unsigned_type min_value = minimum_unsigned_value<T>();
+			return (unsigned_type)(((unsigned_type)v + min_value) >> shift);
 		} else if constexpr (::std::is_integral<T>::value) {
 			return v >> shift;
 		} else {
@@ -730,9 +743,9 @@ namespace sort {
 #endif
 #endif
 						if constexpr (::std::is_integral<T>::value && ::std::is_signed<T>::value) {
-			constexpr typename ::std::make_unsigned<T>::type min_value = {
-							~(~typename ::std::make_unsigned<T>::type{0} >> 1)};
-			return (typename ::std::make_unsigned<T>::type)v + min_value;
+			using unsigned_type               = typename ::std::make_unsigned<T>::type;
+			constexpr unsigned_type min_value = minimum_unsigned_value<T>();
+			return (unsigned_type)v + min_value;
 		} else if constexpr (::std::is_integral<T>::value) {
 			return v;
 		} else {
@@ -1619,23 +1632,50 @@ namespace sort {
 		return {};
 	}
 
+	template<typename It, typename ExtractKey, size_t N = 0>
+	always_force_inline constexpr auto retrieve_key(It it, ExtractKey extract_key)
+	{
+		using extract_type = decltype(ExtractKey{}(*std::declval<It>()));
+		if constexpr (sort::is_tuple<extract_type>::value) {
+			return std::get<N>(extract_key(*it));
+		} else if constexpr (sort::is_array<extract_type>::value) {
+			return std::get<N>(extract_key(*it));
+		} else {
+			return extract_key(*it);
+		}
+	}
+
+	template<typename T, typename ExtractKey, size_t N = 0>
+	always_force_inline constexpr auto retrieve_key_value(const T& value, ExtractKey extract_key)
+	{
+		using extract_type = decltype(ExtractKey{}(std::declval<T>()));
+		if constexpr (sort::is_tuple<extract_type>::value) {
+			return std::get<N>(extract_key(value));
+		} else if constexpr (sort::is_array<extract_type>::value) {
+			return std::get<N>(extract_key(value));
+		} else {
+			return extract_key(value);
+		}
+	}
+
 	template<typename It, typename ExtractKey, size_t Idx, size_t... Idxs, typename... Deferred>
-	constexpr void counting_sort_get_impl_recursive(It start, It end, ExtractKey extract_key,
+	constexpr void counting_sort_impl_recursive(It start, It end, ExtractKey extract_key,
 					std::index_sequence<Idx, Idxs...>, parameter_list<Deferred...>)
 	{
 		using value_type   = sort::iter_value_t<It>;
 		using extract_type = decltype(ExtractKey{}(*std::declval<It>()));
-		using key_type     = sort::remove_cvref_t<decltype(::std::get<Idx>(
-                        ExtractKey{}(*std::declval<It>())))>; // this works for both tuples and arrays
-
+		using key_type     = sort::remove_cvref_t<decltype(sort::retrieve_key<It, ExtractKey, Idx>(
+                        std::declval<It>(), ExtractKey{}))>;
+		// sort::remove_cvref_t<decltype(::std::get<Idx>(ExtractKey{}(*std::declval<It>())))>; // this works for both
+		// tuples and arrays
 		if constexpr (is_tuple<key_type>::value) {
 			if constexpr (sizeof...(Idxs)) {
-				return counting_sort_get_impl_recursive(
+				return counting_sort_impl_recursive(
 								start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
 								std::make_index_sequence<std::tuple_size<key_type>::value>{},
 								parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{});
 			} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
-				return counting_sort_get_impl_recursive(
+				return counting_sort_impl_recursive(
 								start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
 								std::make_index_sequence<std::tuple_size<key_type>::value>{},
 								parameter_list<Deferred...>{});
@@ -1662,28 +1702,28 @@ namespace sort {
 			auto split = sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
 			if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 				if constexpr (sizeof...(Idxs)) {
-					counting_sort_get_impl_recursive(start, split, extract_key, std::index_sequence<Idxs...>{},
+					counting_sort_impl_recursive(start, split, extract_key, std::index_sequence<Idxs...>{},
 									parameter_list<Deferred...>{});
-					return counting_sort_get_impl_recursive(split, end, extract_key, std::index_sequence<Idxs...>{},
+					return counting_sort_impl_recursive(split, end, extract_key, std::index_sequence<Idxs...>{},
 									parameter_list<Deferred...>{});
 				} else {
 					using popped_list    = decltype(pop_front(parameter_list<Deferred...>{}));
 					using first_deferred = decltype(front(parameter_list<Deferred...>{}));
-					counting_sort_get_impl_recursive(start, split, typename first_deferred::callback{},
+					counting_sort_impl_recursive(start, split, typename first_deferred::callback{},
 									typename first_deferred::idxs{}, popped_list{});
-					return counting_sort_get_impl_recursive(split, end, typename first_deferred::callback{},
+					return counting_sort_impl_recursive(split, end, typename first_deferred::callback{},
 									typename first_deferred::idxs{}, popped_list{});
 				}
 			}
 		} else if constexpr (is_array<key_type>::value) {
 			if constexpr (sizeof...(Idxs)) {
-				return counting_sort_get_impl_recursive(
+				return counting_sort_impl_recursive(
 								start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
 								sort::make_reversed_index_sequence(
 												std::make_index_sequence<std::tuple_size<key_type>::value>{}),
 								parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{});
 			} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
-				return counting_sort_get_impl_recursive(
+				return counting_sort_impl_recursive(
 								start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
 								sort::make_reversed_index_sequence(
 												std::make_index_sequence<std::tuple_size<key_type>::value>{}),
@@ -1702,6 +1742,11 @@ namespace sort {
 #endif
 			using index_type = size_t;
 			static_assert(std::is_integral<key_type>::value
+#if defined __has_include
+#if __has_include(<bitset>)
+											|| is_bitset<key_type>::value
+#endif
+#endif
 #if defined(cplusplus_version_20)
 											|| std::is_same<key_type, float>::value ||
 											std::is_same<key_type, double>::value
@@ -1721,6 +1766,8 @@ namespace sort {
 			std::array<uint16_t, sizeof(key_type)> progress = {};
 			std::array<It, sizeof(key_type)>       its;
 
+			// auto         mx_tu                 = sort::treat_as_unsigned(~max_key_type{0});
+			// auto         mn_tu                 = sort::treat_as_unsigned(max_key_type{0});
 			max_key_type mn                    = ~max_key_type{0};
 			max_key_type mx                    = max_key_type{0};
 			uint8_t      mxs[sizeof(key_type)] = {0};
@@ -1735,31 +1782,81 @@ namespace sort {
 				ok = true;
 
 			for (It it = start; it != end; ++it) {
-				key_type k = ::std::get<Idx>(extract_key(*it));
+				key_type k = retrieve_key<It, ExtractKey, Idx>(it, extract_key);
+				//::std::get<Idx>(extract_key(*it));
 
-				if constexpr (is_bitset<key_type>::value || ::std::is_integral<key_type>::value) {
+				if constexpr (is_bitset<key_type>::value) {
 					mn = k < mn ? k : mn;
 					mx = k > mx ? k : mx;
+
+					for (size_t x = 0; x < sizeof(key_type); x++) {
+						uint8_t key_byte;
+						key_byte = sort::treat_as_unsigned_rshifted(k, x * 8) & 0xff;
+
+						mns[x]          = key_byte < mns[x] ? key_byte : mns[x];
+						mxs[x]          = key_byte > mxs[x] ? key_byte : mxs[x];
+						keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
+						last_key[x]     = key_byte;
+
+						++stack_data[count_indexs * x + key_byte];
+					}
+				} else if (::std::is_integral<key_type>::value) {
+					if constexpr (::std::is_signed<key_type>::value) {
+						using unsigned_type = typename ::std::make_unsigned<max_key_type>::type;
+
+						// unsigned_type min_value = 0;
+						// min_value               = ~min_value;
+						// min_value               = min_value >> 1u;
+						// min_value               = ~min_value; //{~((~(unsigned_type{0})) >> 1)};
+						constexpr unsigned_type min_value = minimum_unsigned_value<max_key_type>();
+						//~((~(unsigned_type{0}))>>1u);
+
+						unsigned_type uk = k + min_value;
+						mn               = uk < mn ? uk : mn;
+						mx               = uk > mx ? uk : mx;
+
+						for (size_t x = 0; x < sizeof(key_type); x++) {
+							uint8_t key_byte;
+							key_byte = ((uk >> (x * 8)) & 0xff);
+
+							mns[x]          = key_byte < mns[x] ? key_byte : mns[x];
+							mxs[x]          = key_byte > mxs[x] ? key_byte : mxs[x];
+							keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
+							last_key[x]     = key_byte;
+
+							++stack_data[count_indexs * x + key_byte];
+						}
+					} else {
+						mn = k < mn ? k : mn;
+						mx = k > mx ? k : mx;
+						for (size_t x = 0; x < sizeof(key_type); x++) {
+							uint8_t key_byte;
+							key_byte = ((k >> (x * 8)) & 0xff);
+
+							mns[x]          = key_byte < mns[x] ? key_byte : mns[x];
+							mxs[x]          = key_byte > mxs[x] ? key_byte : mxs[x];
+							keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
+							last_key[x]     = key_byte;
+
+							++stack_data[count_indexs * x + key_byte];
+						}
+					}
 				} else if constexpr (::std::is_floating_point<key_type>::value) {
 					max_key_type uk = sort::treat_as_unsigned(k);
 					mn              = uk < mn ? uk : mn;
 					mx              = uk > mx ? uk : mx;
-				}
 
-				for (size_t x = 0; x < sizeof(key_type); x++) {
-					uint8_t key_byte;
-					if constexpr (!std::is_integral<key_type>::value) {
+					for (size_t x = 0; x < sizeof(key_type); x++) {
+						uint8_t key_byte;
 						key_byte = sort::treat_as_unsigned_rshifted(k, x * 8) & 0xff;
-					} else {
-						key_byte = ((k >> (x * 8)) & 0xff);
+
+						mns[x]          = key_byte < mns[x] ? key_byte : mns[x];
+						mxs[x]          = key_byte > mxs[x] ? key_byte : mxs[x];
+						keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
+						last_key[x]     = key_byte;
+
+						++stack_data[count_indexs * x + key_byte];
 					}
-
-					mns[x]          = key_byte < mns[x] ? key_byte : mns[x];
-					mxs[x]          = key_byte > mxs[x] ? key_byte : mxs[x];
-					keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
-					last_key[x]     = key_byte;
-
-					++stack_data[count_indexs * x + key_byte];
 				}
 			}
 
@@ -1769,20 +1866,22 @@ namespace sort {
 				switch (diff) {
 				case 1: {
 					auto it = sort::partition_branchless(start, end, [&mx](const auto& v) {
-						return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
+						return sort::treat_as_unsigned(retrieve_key_value<decltype(v), ExtractKey, Idx>(v, ExtractKey{})
+											   //::std::get<Idx>(ExtractKey{}(v))
+											   ) < mx;
 					});
 					if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 						if constexpr (sizeof...(Idxs)) {
-							counting_sort_get_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
+							counting_sort_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
 											parameter_list<Deferred...>{});
-							return counting_sort_get_impl_recursive(it, end, extract_key,
-											std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
+							return counting_sort_impl_recursive(it, end, extract_key, std::index_sequence<Idxs...>{},
+											parameter_list<Deferred...>{});
 						} else {
 							using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
 							using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-							counting_sort_get_impl_recursive(start, it, typename first_deferred::callback{},
+							counting_sort_impl_recursive(start, it, typename first_deferred::callback{},
 											typename first_deferred::idxs{}, popped_list{});
-							return counting_sort_get_impl_recursive(it, end, typename first_deferred::callback{},
+							return counting_sort_impl_recursive(it, end, typename first_deferred::callback{},
 											typename first_deferred::idxs{}, popped_list{});
 						}
 					} else {
@@ -1792,12 +1891,12 @@ namespace sort {
 				case 0:
 					if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 						if constexpr (sizeof...(Idxs)) {
-							return counting_sort_get_impl_recursive(start, end, extract_key,
-											std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
+							return counting_sort_impl_recursive(start, end, extract_key, std::index_sequence<Idxs...>{},
+											parameter_list<Deferred...>{});
 						} else {
 							using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
 							using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-							return counting_sort_get_impl_recursive(start, end, typename first_deferred::callback{},
+							return counting_sort_impl_recursive(start, end, typename first_deferred::callback{},
 											typename first_deferred::idxs{}, popped_list{});
 						}
 						// return counting_sort_get_impl(start, end, extract_key, std::index_sequence<Idxs...>{});
@@ -1812,20 +1911,23 @@ namespace sort {
 				switch (diff) {
 				case 1: {
 					auto it = sort::partition_branchless(start, end, [&mx](const auto& v) {
-						return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
+						return sort::treat_as_unsigned(
+											   sort::retrieve_key_value<decltype(v), ExtractKey, Idx>(v, ExtractKey{})
+											   //::std::get<Idx>(ExtractKey{}(v))
+											   ) < mx;
 					});
 					if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 						if constexpr (sizeof...(Idxs)) {
-							counting_sort_get_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
+							counting_sort_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
 											parameter_list<Deferred...>{});
-							return counting_sort_get_impl_recursive(it, end, extract_key,
-											std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
+							return counting_sort_impl_recursive(it, end, extract_key, std::index_sequence<Idxs...>{},
+											parameter_list<Deferred...>{});
 						} else {
 							using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
 							using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-							counting_sort_get_impl_recursive(start, it, typename first_deferred::callback{},
+							counting_sort_impl_recursive(start, it, typename first_deferred::callback{},
 											typename first_deferred::idxs{}, popped_list{});
-							return counting_sort_get_impl_recursive(it, end, typename first_deferred::callback{},
+							return counting_sort_impl_recursive(it, end, typename first_deferred::callback{},
 											typename first_deferred::idxs{}, popped_list{});
 						}
 					} else {
@@ -1835,12 +1937,12 @@ namespace sort {
 				case 0:
 					if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 						if constexpr (sizeof...(Idxs)) {
-							return counting_sort_get_impl_recursive(start, end, extract_key,
-											std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
+							return counting_sort_impl_recursive(start, end, extract_key, std::index_sequence<Idxs...>{},
+											parameter_list<Deferred...>{});
 						} else {
 							using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
 							using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-							return counting_sort_get_impl_recursive(start, end, typename first_deferred::callback{},
+							return counting_sort_impl_recursive(start, end, typename first_deferred::callback{},
 											typename first_deferred::idxs{}, popped_list{});
 						}
 						// return counting_sort_get_impl(start, end, extract_key, std::index_sequence<Idxs...>{});
@@ -1912,23 +2014,25 @@ namespace sort {
 						}
 
 						if (!all_strictly_ones) {
-							auto it = sort::partition_branchless(start, end, [&mx](const auto& v) {
-								return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
+							auto it = sort::partition_branchless(start, end, [&mn](const auto& v) {
+								return sort::treat_as_unsigned(sort::retrieve_key_value<decltype(v), ExtractKey, Idx>(
+													   v, ExtractKey{})
+													   //::std::get<Idx>(ExtractKey{}(v))
+													   ) == mn;
 							});
 
 							if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 								if constexpr (sizeof...(Idxs)) {
-									counting_sort_get_impl_recursive(start, it, extract_key,
-													std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
-									return counting_sort_get_impl_recursive(it, end, extract_key,
+									counting_sort_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
+													parameter_list<Deferred...>{});
+									return counting_sort_impl_recursive(it, end, extract_key,
 													std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
 								} else {
 									using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
 									using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-									counting_sort_get_impl_recursive(start, it, typename first_deferred::callback{},
+									counting_sort_impl_recursive(start, it, typename first_deferred::callback{},
 													typename first_deferred::idxs{}, popped_list{});
-									return counting_sort_get_impl_recursive(it, end,
-													typename first_deferred::callback{},
+									return counting_sort_impl_recursive(it, end, typename first_deferred::callback{},
 													typename first_deferred::idxs{}, popped_list{});
 								}
 							} else {
@@ -1938,12 +2042,12 @@ namespace sort {
 					} else if (xor_count == 0) {
 						if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 							if constexpr (sizeof...(Idxs)) {
-								return counting_sort_get_impl_recursive(start, end, extract_key,
+								return counting_sort_impl_recursive(start, end, extract_key,
 												std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
 							} else {
 								using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
 								using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-								return counting_sort_get_impl_recursive(start, end, typename first_deferred::callback{},
+								return counting_sort_impl_recursive(start, end, typename first_deferred::callback{},
 												typename first_deferred::idxs{}, popped_list{});
 							}
 						} else {
@@ -1955,20 +2059,23 @@ namespace sort {
 					switch (diff) {
 					case 1: {
 						auto it = sort::partition_branchless(start, end, [&mx](const auto& v) {
-							return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
+							return sort::treat_as_unsigned(
+												   retrieve_key_value<decltype(v), ExtractKey, Idx>(v, ExtractKey{})
+												   //::std::get<Idx>(ExtractKey{}(v))
+												   ) < mx;
 						});
 						if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 							if constexpr (sizeof...(Idxs)) {
-								counting_sort_get_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
+								counting_sort_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
 												parameter_list<Deferred...>{});
-								return counting_sort_get_impl_recursive(it, end, extract_key,
+								return counting_sort_impl_recursive(it, end, extract_key,
 												std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
 							} else {
 								using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
 								using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-								counting_sort_get_impl_recursive(start, it, typename first_deferred::callback{},
+								counting_sort_impl_recursive(start, it, typename first_deferred::callback{},
 												typename first_deferred::idxs{}, popped_list{});
-								return counting_sort_get_impl_recursive(it, end, typename first_deferred::callback{},
+								return counting_sort_impl_recursive(it, end, typename first_deferred::callback{},
 												typename first_deferred::idxs{}, popped_list{});
 							}
 						} else {
@@ -1978,12 +2085,12 @@ namespace sort {
 					case 0:
 						if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 							if constexpr (sizeof...(Idxs)) {
-								return counting_sort_get_impl_recursive(start, end, extract_key,
+								return counting_sort_impl_recursive(start, end, extract_key,
 												std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
 							} else {
 								using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
 								using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-								return counting_sort_get_impl_recursive(start, end, typename first_deferred::callback{},
+								return counting_sort_impl_recursive(start, end, typename first_deferred::callback{},
 												typename first_deferred::idxs{}, popped_list{});
 							}
 							// return counting_sort_get_impl(start, end, extract_key, std::index_sequence<Idxs...>{});
@@ -2027,21 +2134,24 @@ namespace sort {
 
 			switch (partitions) {
 			case 2: {
-				auto it = sort::partition_branchless(start, end, [&mx](const auto& v) {
-					return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) < mx;
+				auto it = sort::partition_branchless(start, end, [&mn](const auto& v) {
+					return sort::treat_as_unsigned(
+										   sort::retrieve_key_value<decltype(v), ExtractKey, Idx>(v, ExtractKey{})
+										   //	::std::get<Idx>(ExtractKey{}(v))
+										   ) == mn;
 				});
 				if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 					if constexpr (sizeof...(Idxs)) {
-						counting_sort_get_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
+						counting_sort_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
 										parameter_list<Deferred...>{});
-						return counting_sort_get_impl_recursive(it, end, extract_key, std::index_sequence<Idxs...>{},
+						return counting_sort_impl_recursive(it, end, extract_key, std::index_sequence<Idxs...>{},
 										parameter_list<Deferred...>{});
 					} else {
 						using popped_list    = decltype(pop_front(parameter_list<Deferred...>{}));
 						using first_deferred = decltype(front(parameter_list<Deferred...>{}));
-						counting_sort_get_impl_recursive(start, it, typename first_deferred::callback{},
+						counting_sort_impl_recursive(start, it, typename first_deferred::callback{},
 										typename first_deferred::idxs{}, popped_list{});
-						return counting_sort_get_impl_recursive(it, end, typename first_deferred::callback{},
+						return counting_sort_impl_recursive(it, end, typename first_deferred::callback{},
 										typename first_deferred::idxs{}, popped_list{});
 					}
 				} else {
@@ -2053,12 +2163,12 @@ namespace sort {
 			case 0:
 				if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 					if constexpr (sizeof...(Idxs)) {
-						counting_sort_get_impl_recursive(start, end, extract_key, std::index_sequence<Idxs...>{},
+						counting_sort_impl_recursive(start, end, extract_key, std::index_sequence<Idxs...>{},
 										parameter_list<Deferred...>{});
 					} else {
 						using popped_list    = decltype(pop_front(parameter_list<Deferred...>{}));
 						using first_deferred = decltype(front(parameter_list<Deferred...>{}));
-						counting_sort_get_impl_recursive(start, end, typename first_deferred::callback{},
+						counting_sort_impl_recursive(start, end, typename first_deferred::callback{},
 										typename first_deferred::idxs{}, popped_list{});
 					}
 					// return counting_sort_get_impl(start, end, extract_key, std::index_sequence<Idxs...>{});
@@ -2086,9 +2196,14 @@ namespace sort {
 						for (; s < e; s++) {
 							It      swap_left = start_it + s;
 							It      swap_target;
-							uint8_t key = (sort::treat_as_unsigned(::std::get<Idx>(extract_key(*swap_left))) >>
+							uint8_t key = (sort::treat_as_unsigned(
+														   sort::retrieve_key<decltype(swap_left), ExtractKey, Idx>(
+																		   swap_left, extract_key)) >>
 														  bit_shift) &
 										  0xff;
+
+							//(sort::treat_as_unsigned(::std::get<Idx>(extract_key(*swap_left))) >>
+							// bit_shift) & 0xff;
 							size_t target_idx = counts[key];
 							swap_target       = start_it + target_idx;
 
@@ -2144,13 +2259,13 @@ namespace sort {
 							if (next_depth >= next.bytes) {
 								// go one key deeper
 								if constexpr (sizeof...(Idxs)) {
-									counting_sort_get_impl_recursive(start_it + start_offset, start_it + end_offset,
+									counting_sort_impl_recursive(start_it + start_offset, start_it + end_offset,
 													extract_key, std::index_sequence<Idxs...>{},
 													parameter_list<Deferred...>{});
 								} else {
 									using popped_list    = decltype(pop_front(parameter_list<Deferred...>{}));
 									using first_deferred = decltype(front(parameter_list<Deferred...>{}));
-									counting_sort_get_impl_recursive(start_it + start_offset, start_it + end_offset,
+									counting_sort_impl_recursive(start_it + start_offset, start_it + end_offset,
 													typename first_deferred::callback{},
 													typename first_deferred::idxs{}, popped_list{});
 								}
@@ -2174,18 +2289,29 @@ namespace sort {
 
 						uint32_t bit_shift = ((next.idxs >> (next_depth * 8)) & 0xff) * 8;
 						for (It it = start_it + start_offset; it != end_it; ++it) {
-							key_type k = ::std::get<Idx>(extract_key(*it));
-							uint8_t  key_byte;
+							key_type k = sort::retrieve_key<decltype(it), ExtractKey, Idx>(it, extract_key);
+							//::std::get<Idx>(extract_key(*it));
+							uint8_t key_byte;
 
 							if constexpr (is_bitset<key_type>::value) {
 								mn       = k < mn ? k : mn;
 								mx       = k > mx ? k : mx;
 								key_byte = sort::treat_as_unsigned_rshifted(k, bit_shift) & 0xff;
-							} else if constexpr (::std::is_integral<key_type>::value) {
-								mn       = k < mn ? k : mn;
-								mx       = k > mx ? k : mx;
-								key_byte = k >> bit_shift;
-							} else { // if constexpr (::std::is_floating_point<key_type>::value)
+							} else if (::std::is_integral<key_type>::value) {
+								if constexpr (::std::is_signed<key_type>::value) {
+									using unsigned_type = typename ::std::make_unsigned<max_key_type>::type;
+									constexpr unsigned_type min_value = minimum_unsigned_value<max_key_type>();
+									unsigned_type           uk        = k + min_value;
+
+									mn       = uk < mn ? uk : mn;
+									mx       = uk > mx ? uk : mx;
+									key_byte = uk >> bit_shift;
+								} else {
+									mn       = k < mn ? k : mn;
+									mx       = k > mx ? k : mx;
+									key_byte = k >> bit_shift;
+								}
+							} else if constexpr (::std::is_floating_point<key_type>::value) {
 								max_key_type uk = sort::treat_as_unsigned(k);
 								mn              = uk < mn ? uk : mn;
 								mx              = uk > mx ? uk : mx;
@@ -2203,23 +2329,24 @@ namespace sort {
 							case 1: {
 								auto it = sort::partition_branchless(
 												start_it + start_offset, end_it, [&mx](const auto& v) {
-													return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) <
-														   mx;
+													return sort::treat_as_unsigned(sort::retrieve_key_value<decltype(v),
+																		   ExtractKey, Idx>(v, ExtractKey{})
+																		   //::std::get<Idx>(ExtractKey{}(v))
+																		   ) < mx;
 												});
 								if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 									if constexpr (sizeof...(Idxs)) {
-										counting_sort_get_impl_recursive(start_it + start_offset, it, extract_key,
+										counting_sort_impl_recursive(start_it + start_offset, it, extract_key,
 														std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
-										counting_sort_get_impl_recursive(it, end_it, extract_key,
+										counting_sort_impl_recursive(it, end_it, extract_key,
 														std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
 									} else {
 										using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
 										using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-										counting_sort_get_impl_recursive(start_it + start_offset, it,
+										counting_sort_impl_recursive(start_it + start_offset, it,
 														typename first_deferred::callback{},
 														typename first_deferred::idxs{}, popped_list{});
-										counting_sort_get_impl_recursive(it, end_it,
-														typename first_deferred::callback{},
+										counting_sort_impl_recursive(it, end_it, typename first_deferred::callback{},
 														typename first_deferred::idxs{}, popped_list{});
 									}
 								}
@@ -2228,13 +2355,13 @@ namespace sort {
 							case 0:
 								if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 									if constexpr (sizeof...(Idxs)) {
-										return counting_sort_get_impl_recursive(start_it + start_offset, end_it,
+										return counting_sort_impl_recursive(start_it + start_offset, end_it,
 														extract_key, std::index_sequence<Idxs...>{},
 														parameter_list<Deferred...>{});
 									} else {
 										using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
 										using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-										return counting_sort_get_impl_recursive(start_it + start_offset, end_it,
+										return counting_sort_impl_recursive(start_it + start_offset, end_it,
 														typename first_deferred::callback{},
 														typename first_deferred::idxs{}, popped_list{});
 									}
@@ -2249,23 +2376,24 @@ namespace sort {
 							case 1: {
 								auto it = sort::partition_branchless(
 												start_it + start_offset, end_it, [&mx](const auto& v) {
-													return sort::treat_as_unsigned(::std::get<Idx>(ExtractKey{}(v))) <
-														   mx;
+													return sort::treat_as_unsigned(sort::retrieve_key_value<decltype(v),
+																		   ExtractKey, Idx>(v, ExtractKey{})
+																		   //	::std::get<Idx>(ExtractKey{}(v))
+																		   ) < mx;
 												});
 								if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 									if constexpr (sizeof...(Idxs)) {
-										counting_sort_get_impl_recursive(start_it + start_offset, it, extract_key,
+										counting_sort_impl_recursive(start_it + start_offset, it, extract_key,
 														std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
-										counting_sort_get_impl_recursive(it, end_it, extract_key,
+										counting_sort_impl_recursive(it, end_it, extract_key,
 														std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
 									} else {
 										using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
 										using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-										counting_sort_get_impl_recursive(start_it + start_offset, it,
+										counting_sort_impl_recursive(start_it + start_offset, it,
 														typename first_deferred::callback{},
 														typename first_deferred::idxs{}, popped_list{});
-										counting_sort_get_impl_recursive(it, end_it,
-														typename first_deferred::callback{},
+										counting_sort_impl_recursive(it, end_it, typename first_deferred::callback{},
 														typename first_deferred::idxs{}, popped_list{});
 									}
 								}
@@ -2274,12 +2402,12 @@ namespace sort {
 							case 0:
 								if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 									if constexpr (sizeof...(Idxs)) {
-										counting_sort_get_impl_recursive(start_it + start_offset, end_it, extract_key,
+										counting_sort_impl_recursive(start_it + start_offset, end_it, extract_key,
 														std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
 									} else {
 										using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
 										using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-										counting_sort_get_impl_recursive(start_it + start_offset, end_it,
+										counting_sort_impl_recursive(start_it + start_offset, end_it,
 														typename first_deferred::callback{},
 														typename first_deferred::idxs{}, popped_list{});
 									}
@@ -2352,17 +2480,21 @@ namespace sort {
 
 									if (!all_strictly_ones) {
 										auto it = sort::partition_branchless(
-														start_it + start_offset, end_it, [&mx](const auto& v) {
-															return sort::treat_as_unsigned(::std::get<Idx>(
-																				   ExtractKey{}(v))) < mx;
+														start_it + start_offset, end_it, [&mn](const auto& v) {
+															return sort::treat_as_unsigned(
+																				   sort::retrieve_key_value<decltype(v),
+																								   ExtractKey, Idx>(
+																								   v, ExtractKey{})
+																				   //::std::get<Idx>(ExtractKey{}(v))
+																				   ) == mn;
 														});
 
 										if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 											if constexpr (sizeof...(Idxs)) {
-												counting_sort_get_impl_recursive(start_it + start_offset, it,
-																extract_key, std::index_sequence<Idxs...>{},
+												counting_sort_impl_recursive(start_it + start_offset, it, extract_key,
+																std::index_sequence<Idxs...>{},
 																parameter_list<Deferred...>{});
-												counting_sort_get_impl_recursive(it, end_it, extract_key,
+												counting_sort_impl_recursive(it, end_it, extract_key,
 																std::index_sequence<Idxs...>{},
 																parameter_list<Deferred...>{});
 											} else {
@@ -2370,10 +2502,10 @@ namespace sort {
 																parameter_list<Deferred...>{}));
 												using first_deferred =
 																decltype(sort::front(parameter_list<Deferred...>{}));
-												counting_sort_get_impl_recursive(start_it + start_offset, it,
+												counting_sort_impl_recursive(start_it + start_offset, it,
 																typename first_deferred::callback{},
 																typename first_deferred::idxs{}, popped_list{});
-												counting_sort_get_impl_recursive(it, end_it,
+												counting_sort_impl_recursive(it, end_it,
 																typename first_deferred::callback{},
 																typename first_deferred::idxs{}, popped_list{});
 											}
@@ -2383,14 +2515,14 @@ namespace sort {
 								} else if (xor_count == 0) {
 									if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 										if constexpr (sizeof...(Idxs)) {
-											counting_sort_get_impl_recursive(start_it + start_offset, end_it,
-															extract_key, std::index_sequence<Idxs...>{},
+											counting_sort_impl_recursive(start_it + start_offset, end_it, extract_key,
+															std::index_sequence<Idxs...>{},
 															parameter_list<Deferred...>{});
 										} else {
 											using popped_list =
 															decltype(sort::pop_front(parameter_list<Deferred...>{}));
 											using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-											counting_sort_get_impl_recursive(start_it + start_offset, end_it,
+											counting_sort_impl_recursive(start_it + start_offset, end_it,
 															typename first_deferred::callback{},
 															typename first_deferred::idxs{}, popped_list{});
 										}
@@ -2404,24 +2536,28 @@ namespace sort {
 									auto it = sort::partition_branchless(
 													start_it + start_offset, end_it, [&mx](const auto& v) {
 														return sort::treat_as_unsigned(
-																			   ::std::get<Idx>(ExtractKey{}(v))) < mx;
+																			   sort::retrieve_key_value<decltype(v),
+																							   ExtractKey, Idx>(
+																							   v, ExtractKey{})
+																			   //::std::get<Idx>(ExtractKey{}(v))
+																			   ) < mx;
 													});
 									if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 										if constexpr (sizeof...(Idxs)) {
-											counting_sort_get_impl_recursive(start_it + start_offset, it, extract_key,
+											counting_sort_impl_recursive(start_it + start_offset, it, extract_key,
 															std::index_sequence<Idxs...>{},
 															parameter_list<Deferred...>{});
-											counting_sort_get_impl_recursive(it, end_it, extract_key,
+											counting_sort_impl_recursive(it, end_it, extract_key,
 															std::index_sequence<Idxs...>{},
 															parameter_list<Deferred...>{});
 										} else {
 											using popped_list =
 															decltype(sort::pop_front(parameter_list<Deferred...>{}));
 											using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-											counting_sort_get_impl_recursive(start_it + start_offset, it,
+											counting_sort_impl_recursive(start_it + start_offset, it,
 															typename first_deferred::callback{},
 															typename first_deferred::idxs{}, popped_list{});
-											counting_sort_get_impl_recursive(it, end_it,
+											counting_sort_impl_recursive(it, end_it,
 															typename first_deferred::callback{},
 															typename first_deferred::idxs{}, popped_list{});
 										}
@@ -2431,14 +2567,14 @@ namespace sort {
 								case 0:
 									if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
 										if constexpr (sizeof...(Idxs)) {
-											counting_sort_get_impl_recursive(start_it + start_offset, end_it,
-															extract_key, std::index_sequence<Idxs...>{},
+											counting_sort_impl_recursive(start_it + start_offset, end_it, extract_key,
+															std::index_sequence<Idxs...>{},
 															parameter_list<Deferred...>{});
 										} else {
 											using popped_list =
 															decltype(sort::pop_front(parameter_list<Deferred...>{}));
 											using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-											counting_sort_get_impl_recursive(start_it + start_offset, end_it,
+											counting_sort_impl_recursive(start_it + start_offset, end_it,
 															typename first_deferred::callback{},
 															typename first_deferred::idxs{}, popped_list{});
 										}
@@ -2483,8 +2619,10 @@ namespace sort {
 									for (; s < e; s++) {
 										It      swap_left = next_start_it + s;
 										It      swap_target;
-										uint8_t key = (sort::treat_as_unsigned(
-																	   ::std::get<Idx>(extract_key(*swap_left))) >>
+										uint8_t key = (sort::treat_as_unsigned(sort::retrieve_key<decltype(swap_left),
+																	   ExtractKey, Idx>(swap_left, extract_key)
+																	   //::std::get<Idx>(extract_key(*swap_left))
+																	   ) >>
 																	  bit_shift) &
 													  0xff;
 										size_t target_idx = counts[key];
@@ -2516,8 +2654,8 @@ namespace sort {
 				progress[depth] += !deeper;
 				start_it = its[depth];
 
-				//progress[depth] += 1;
-				//depth += (progress[depth] < 256) ? -1 : 1;
+				// progress[depth] += 1;
+				// depth += (progress[depth] < 256) ? -1 : 1;
 			}
 		}
 	}
@@ -2525,7 +2663,7 @@ namespace sort {
 	template<typename It, typename ExtractKey, size_t Idx, size_t... Idxs>
 	constexpr void counting_sort_get_impl(It start, It end, ExtractKey extract_key, std::index_sequence<Idx, Idxs...>)
 	{
-		return counting_sort_get_impl_recursive(
+		return counting_sort_impl_recursive(
 						start, end, extract_key, std::index_sequence<Idx, Idxs...>{}, parameter_list<>{});
 	}
 
@@ -2543,7 +2681,7 @@ namespace sort {
 		static_assert(is_tuple<key_type>::value && is_convertible_to_integrals<key_type>::value,
 						"extract_key must return a tuple type!");
 
-		return sort::counting_sort_get_impl_recursive(start, end, extract_key,
+		return sort::counting_sort_impl_recursive(start, end, extract_key,
 						std::make_index_sequence<std::tuple_size<key_type>::value>{}, parameter_list<>{});
 	}
 
@@ -2681,13 +2819,13 @@ namespace sort {
 		}
 
 		if constexpr (is_tuple<key_type>::value) {
-			sort::counting_sort_get_impl_recursive(f, l, extract_key,
+			sort::counting_sort_impl_recursive(f, l, extract_key,
 							std::make_index_sequence<std::tuple_size<key_type>::value>{}, parameter_list<>{});
 #if defined __has_include
 #if __has_include(<bitset>)
 		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) > 1) {
 
-			sort::counting_sort_byte_shift_flat(f, l, extract_key);
+			sort::counting_sort_impl_recursive(f, l, extract_key, std::index_sequence<0>{}, parameter_list<>{});
 		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) <= 1) {
 			sort::partition_branchless(f, l, [](const auto& value) { return !(ExtractKey{}(value)[0]); });
 #endif
@@ -2697,7 +2835,7 @@ namespace sort {
 			// flip the extract function to keep the semantics the same as expected
 			sort::partition_branchless(f, l, [](const auto& value) { return !ExtractKey{}(value); });
 		} else if constexpr (is_array<key_type>::value) {
-			sort::counting_sort_get_impl_recursive(f, l, extract_key,
+			sort::counting_sort_impl_recursive(f, l, extract_key,
 							sort::make_reversed_index_sequence(
 											std::make_index_sequence<std::tuple_size<key_type>::value>{}),
 							parameter_list<>{});
@@ -2707,26 +2845,34 @@ namespace sort {
 				if constexpr (::std::is_signed<key_type>::value) {
 					// ::std::numeric_limits<key_type>::min();
 					constexpr typename ::std::make_unsigned<key_type>::type min_value = {
-									~(~typename ::std::make_unsigned<key_type>::type{0} >> 1)};
-					sort::counting_sort_byte_shift_flat(f, l, [](const auto& value) {
-						return (typename ::std::make_unsigned<key_type>::type)value + min_value;
-					});
+									~((~typename ::std::make_unsigned<key_type>::type{0}) >> 1)};
+					sort::counting_sort_impl_recursive(
+									f, l,
+									[](const auto& value) {
+										return (typename ::std::make_unsigned<key_type>::type)value + min_value;
+									},
+									std::index_sequence<0>{}, parameter_list<>{});
 				} else {
-					sort::counting_sort_byte_shift_flat(f, l, extract_key);
+					sort::counting_sort_impl_recursive(f, l, extract_key, std::index_sequence<0>{}, parameter_list<>{});
 				}
 			} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
 								 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
 				if constexpr (::std::is_signed<key_type>::value) {
 					constexpr typename ::std::make_unsigned<key_type>::type min_value = {
 									~(~typename ::std::make_unsigned<key_type>::type{0} >> 1)};
-					sort::counting_sort_byte_shift_flat(f, l, [](const key_type& value) {
-						return (typename ::std::make_unsigned<key_type>::type) ~(value + min_value);
-					});
+					sort::counting_sort_impl_recursive(
+									f, l,
+									[](const key_type& value) {
+										return (typename ::std::make_unsigned<key_type>::type) ~(value + min_value);
+									},
+									std::index_sequence<0>{}, parameter_list<>{});
 				} else {
-					sort::counting_sort_byte_shift_flat(f, l, [](const key_type& value) { return ~value; });
+					sort::counting_sort_impl_recursive(
+									f, l, [](const key_type& value) { return ~value; }, std::index_sequence<0>{},
+									parameter_list<>{});
 				}
 			} else {
-				sort::counting_sort_byte_shift_flat(f, l, extract_key);
+				sort::counting_sort_impl_recursive(f, l, extract_key, std::index_sequence<0>{}, parameter_list<>{});
 			}
 		} else {
 			static_assert(false, "counting sort requires some form of integral or boolean convertible type!");
