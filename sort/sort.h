@@ -267,7 +267,7 @@ namespace sort {
 		return false;
 	}
 
-	template<class It, class Compare = std::less<>> constexpr void insertion_sort(It, It, Compare);
+	template<class It, class Compare = std::less<>> constexpr void insertion_sort(It, It, Compare comp = Compare{});
 
 	template<typename It, typename Compare = std::less<>> constexpr void intro_sort(It, It, Compare, size_t);
 
@@ -2733,7 +2733,7 @@ namespace sort {
 		}
 	}
 
-	template<class It, class Compare> constexpr void insertion_sort(It first, It last, Compare comp = Compare{})
+	template<class It, class Compare> constexpr void insertion_sort(It first, It last, Compare comp)
 	{
 		using T = sort::iter_value_t<It>;
 		auto i  = first;
