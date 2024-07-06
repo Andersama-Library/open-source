@@ -316,13 +316,56 @@ namespace sort {
 		return false;
 	}
 
-	template<class It, class Compare = std::less<>> constexpr void insertion_sort(It, It, Compare comp = Compare{});
+#if defined __has_include
+#if __has_include(<bitset>)
+	template<size_t L, size_t R> constexpr bool operator<(const std::bitset<L>& lhs, const std::bitset<R>& rhs)
+	{
+		if constexpr (R > L) {
+			std::bitset<R> tmp = rhs >> L;
+			if (tmp.count())
+				return true;
+		} else if constexpr (L > R) {
+			std::bitset<R> tmp = lhs >> R;
+			if (tmp.count())
+				return false;
+		}
+		constexpr size_t mn = L < R ? L : R;
+		for (size_t i = mn; --i < mn;) {
+			if (lhs[i] < rhs[i])
+				return true;
+		}
+		return false;
+	}
 
-	template<typename It, typename Compare = std::less<>> constexpr void intro_sort(It, It, Compare, size_t);
+	template<size_t L, size_t R> constexpr bool operator>(const std::bitset<L>& lhs, const std::bitset<R>& rhs)
+	{
+		if constexpr (R > L) {
+			std::bitset<R> tmp = rhs >> L;
+			if (tmp.count())
+				return false;
+		} else if constexpr (L > R) {
+			std::bitset<R> tmp = lhs >> R;
+			if (tmp.count())
+				return true;
+		}
+		constexpr size_t mn = L < R ? L : R;
+		for (size_t i = mn; --i < mn;) {
+			if (lhs[i] > rhs[i])
+				return true;
+		}
+		return false;
+	}
+#endif
+#endif
 
-	template<typename It, typename Compare = std::less<>> constexpr void make_heap(It, It, Compare);
+	template<class It, class Compare = sort::less<>> constexpr void insertion_sort(It, It, Compare comp = Compare{});
 
-	template<typename It, typename Compare = std::less<>> constexpr void sort_heap(It, It, Compare);
+	template<typename It, typename Compare = sort::less<>>
+	constexpr void intro_sort(It, It, Compare = Compare{}, size_t = ~size_t{0});
+
+	template<typename It, typename Compare = sort::less<>> constexpr void make_heap(It, It, Compare = Compare{});
+
+	template<typename It, typename Compare = sort::less<>> constexpr void sort_heap(It, It, Compare = Compare{});
 
 	template<typename It, typename ExtractKey, size_t Idx, size_t... Idxs, typename... Deferred>
 	constexpr void counting_sort_get_impl_rec(
@@ -3365,47 +3408,3 @@ namespace sort {
 		}
 	}
 } // namespace sort
-
-#if defined __has_include
-#if __has_include(<bitset>)
-namespace std {
-	template<size_t L, size_t R> constexpr bool operator<(const std::bitset<L>& lhs, const std::bitset<R>& rhs)
-	{
-		if constexpr (R > L) {
-			std::bitset<R> tmp = rhs >> L;
-			if (tmp.count())
-				return true;
-		} else if constexpr (L > R) {
-			std::bitset<R> tmp = lhs >> R;
-			if (tmp.count())
-				return false;
-		}
-		constexpr size_t mn = L < R ? L : R;
-		for (size_t i = mn; --i < mn;) {
-			if (lhs[i] < rhs[i])
-				return true;
-		}
-		return false;
-	}
-
-	template<size_t L, size_t R> constexpr bool operator>(const std::bitset<L>& lhs, const std::bitset<R>& rhs)
-	{
-		if constexpr (R > L) {
-			std::bitset<R> tmp = rhs >> L;
-			if (tmp.count())
-				return false;
-		} else if constexpr (L > R) {
-			std::bitset<R> tmp = lhs >> R;
-			if (tmp.count())
-				return true;
-		}
-		constexpr size_t mn = L < R ? L : R;
-		for (size_t i = mn; --i < mn;) {
-			if (lhs[i] > rhs[i])
-				return true;
-		}
-		return false;
-	}
-} // namespace std
-#endif
-#endif
