@@ -211,6 +211,55 @@ namespace sort {
 		}
 	};
 
+	template<class T = void> struct less {
+		[[nodiscard]] constexpr bool operator()(const T& lhs, const T& rhs) const
+		// noexcept(noexcept(_STD _Fake_copy_init<bool>(_Left < _Right))) /* strengthened */
+		{
+			using namespace sort;
+			return lhs < rhs;
+		}
+	};
+	// Wrappers so we can expand > and < support inside namespace sort vs namespace std (which can be UB)
+	template<> struct less<void> {
+		template<class T0, class T1>
+		_NODISCARD constexpr auto operator()(T0&& lhs, T1&& rhs) const
+						noexcept(noexcept(static_cast<T0&&>(lhs) < static_cast<T1&&>(rhs))) // strengthened
+						-> decltype(static_cast<T0&&>(lhs) < static_cast<T1&&>(rhs))
+		{
+			using namespace sort;
+			return static_cast<T0&&>(lhs) < static_cast<T1&&>(rhs);
+		}
+
+		using is_transparent = int;
+	};
+
+	template<class T = void> struct greater {
+		[[nodiscard]] constexpr bool operator()(const T& lhs, const T& rhs) const
+		// noexcept(noexcept(_STD _Fake_copy_init<bool>(_Left < _Right))) /* strengthened */
+		{
+			using namespace sort;
+			return lhs > rhs;
+		}
+	};
+
+	template<> struct greater<void> {
+		template<class T0, class T1>
+		_NODISCARD constexpr auto operator()(T0&& lhs, T1&& rhs) const
+						noexcept(noexcept(static_cast<T0&&>(lhs) < static_cast<T1&&>(rhs))) // strengthened
+						-> decltype(static_cast<T0&&>(lhs) < static_cast<T1&&>(rhs))
+		{
+			using namespace sort;
+			return static_cast<T0&&>(lhs) > static_cast<T1&&>(rhs);
+		}
+
+		using is_transparent = int;
+	};
+
+	template<typename> struct is_std_less : std::false_type {};
+	template<typename T> struct is_std_less<std::less<T>> : std::true_type {};
+
+	template<typename> struct is_std_greater : std::false_type {};
+	template<typename T> struct is_std_greater<std::greater<T>> : std::true_type {};
 	template<class It> [[nodiscard]] constexpr decltype(auto) get_unwrapped(It&& it)
 	{
 		if constexpr (::std::is_pointer_v<::std::decay_t<It>>) { // special-case pointers and arrays
