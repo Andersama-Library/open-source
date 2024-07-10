@@ -736,16 +736,16 @@ namespace sort {
 		uint8_t  bytes = {};
 	};
 
-	// NOTE: only exists because I found a bug in MSVC AND CLANG codegen...
+	// NOTE: only exists because I *thought* I found a bug in MSVC AND CLANG codegen...
 	template<typename T> always_force_inline constexpr auto minimum_unsigned_value()
 	{
-		using unsigned_type     = typename ::std::make_unsigned<T>::type;
-		unsigned_type min_value = 0;
-		min_value               = ~min_value;
-		min_value               = min_value >> 1u;
-		min_value               = ~min_value; //{~((~(unsigned_type{0})) >> 1)};
-		// unsigned_type min_value = ~((~(unsigned_type{0})) >> 1u);
-		return min_value;
+		using unsigned_type = typename ::std::make_unsigned<T>::type;
+		// unsigned_type min_value = 0;
+		// min_value               = ~min_value;
+		// min_value               = min_value >> 1u;
+		// min_value               = ~min_value; //{~((~(unsigned_type{0})) >> 1)};
+		//  unsigned_type min_value = ~((~(unsigned_type{0})) >> 1u);
+		return ~((~(unsigned_type{0})) >> 1u); // make sure to use LOGICAL shift vs ARTHEMETIC
 	}
 
 	template<typename T> always_force_inline constexpr auto treat_as_unsigned_rshifted(T v, uint32_t shift)
@@ -1794,16 +1794,6 @@ namespace sort {
 			}
 		}
 	}
-
-	template<typename index_type, size_t N> struct counting_sort_idxs {
-		static constexpr size_t initial_count_indexs      = 256 * sizeof(index_type);
-		static constexpr size_t required_start_end_indexs = 257 * sizeof(index_type);
-		static constexpr size_t count_indexs              = 256;
-		static constexpr size_t start_end_indexs          = 257;
-
-		std::array<index_type, required_start_end_indexs> stack_data = {};
-		std::array<index_type, count_indexs>              counts;
-	};
 
 	template<typename Callback, size_t... Idxs> struct defer_callback {
 		using callback = Callback;
