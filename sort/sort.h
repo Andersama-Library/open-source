@@ -857,6 +857,10 @@ namespace sort {
 		using key_type   = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
 		static_assert(std::is_integral<key_type>::value, "extract_key must return an integral type!");
 
+		constexpr bool can_small_sort = ::std::is_default_constructible<value_type>::value &&
+										std::is_same<typename ::std::iterator_traits<It>::iterator_category,
+														::std::random_access_iterator_tag>::value;
+
 		uint32_t bit_shift = (remaining.idxs & 0xff) * 8;
 		--remaining.bytes;
 		remaining.idxs >>= 8;
@@ -868,7 +872,8 @@ namespace sort {
 
 		uint16_t fallback0_count = 0;
 		uint16_t fallback1_count = 0;
-		uint8_t parts[256];
+		uint16_t recursion_count = 0;
+		uint8_t  parts[256];
 		{
 			key_type mn = ~key_type{0};
 			key_type mx = key_type{0};
@@ -904,10 +909,13 @@ namespace sort {
 				partitions += count > 0;
 
 				parts[fallback0_count]       = idx;
-				parts[255 - fallback1_count] = idx;
-
-				fallback0_count += old_count > 1 && old_count <= 128;
-				fallback1_count += old_count > 128;
+				parts[255 - recursion_count] = idx;
+				if constexpr (can_small_sort) {
+					fallback0_count += old_count > 1 && old_count <= 128;
+				} else {
+					fallback0_count += old_count > 1 && old_count <= 32;
+				}
+				recursion_count += old_count > 128;
 
 				count          = total;
 				start_end[idx] = total;
@@ -915,6 +923,13 @@ namespace sort {
 				idx++;
 			}
 			start_end[256] = total;
+			if constexpr (!can_small_sort) {
+				for (size_t i = 0; i < 256; i++) {
+					size_t count                             = start_end[i + 1] - start_end[i];
+					parts[fallback0_count + fallback1_count] = i;
+					fallback1_count += count > 32 && count <= 128;
+				}
+			}
 		}
 		// from skarupke's 2017 video, instead of sorting via the start of the array and
 		// continuously swapping the first element until it's in place
@@ -959,40 +974,41 @@ namespace sort {
 
 		// the recursion step
 		if (remaining.bytes) {
-			for (uint32_t p = 0; p < fallback0_count; p++) {
-				uint32_t i = parts[p];
-				if constexpr (::std::is_default_constructible<value_type>::value &&
-								std::is_same<typename ::std::iterator_traits<It>::iterator_category,
-												::std::random_access_iterator_tag>::value) {
+			if constexpr (can_small_sort) {
+				for (uint32_t p = 0; p < fallback0_count; p++) {
+					uint32_t i = parts[p];
 					sort::small_merge_sort(start + start_end[i], start + start_end[i + 1],
 									[](const auto& lhs, const auto& rhs) {
 										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
 									});
-				} else {
-					size_t items = (start_end[i + 1] - start_end[i]);
-					if (items <= insertion_sort_threshold) {
-						sort::insertion_sort(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-					} else {
-						sort::make_heap(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-						sort::sort_heap(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-					}
+				}
+			} else {
+				for (uint32_t p = 0; p < fallback0_count; p++) {
+					uint32_t i = parts[p];
+					sort::insertion_sort(start + start_end[i], start + start_end[i + 1],
+									[](const auto& lhs, const auto& rhs) {
+										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+									});
+				}
+
+				for (uint32_t p = 0; p < fallback1_count; p++) {
+					uint32_t i = parts[fallback0_count + p];
+					sort::make_heap(start + start_end[i], start + start_end[i + 1],
+									[](const auto& lhs, const auto& rhs) {
+										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+									});
+					sort::sort_heap(start + start_end[i], start + start_end[i + 1],
+									[](const auto& lhs, const auto& rhs) {
+										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+									});
 				}
 			}
 
-			for (uint32_t p = 0; p < fallback1_count; p++) {
+			for (uint32_t p = 0; p < recursion_count; p++) {
 				uint32_t i = parts[255 - p];
 				sort::counting_sort_byte_shift(start + start_end[i], start + start_end[i + 1], extract_key, remaining);
 			}
-			#if 0
+#if 0
 			for (uint32_t i = 0; i < 256; i++) {
 				size_t items = (start_end[i + 1] - start_end[i]);
 				if constexpr (::std::is_default_constructible<value_type>::value &&
@@ -1028,7 +1044,7 @@ namespace sort {
 					}
 				}
 			}
-			#endif
+#endif
 		}
 	}
 
@@ -1038,6 +1054,10 @@ namespace sort {
 		using value_type = sort::iter_value_t<It>;
 		using key_type   = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
 		static_assert(std::is_integral<key_type>::value, "extract_key must return an integral type!");
+
+		constexpr bool can_small_sort = ::std::is_default_constructible<value_type>::value &&
+										std::is_same<typename ::std::iterator_traits<It>::iterator_category,
+														::std::random_access_iterator_tag>::value;
 
 		size_t counts[256] = {0};
 		// The start of one index is the end of another, we can compress the data into
@@ -1114,6 +1134,7 @@ namespace sort {
 		// uint32_t partitions = 0;
 		uint16_t fallback0_count = 0;
 		uint16_t fallback1_count = 0;
+		uint16_t recursion_count = 0;
 		{
 			size_t idx   = 0;
 			size_t total = 0;
@@ -1121,10 +1142,14 @@ namespace sort {
 				size_t old_count = count;
 				// partitions += old_count > 0;
 				parts[fallback0_count]       = idx;
-				parts[255 - fallback1_count] = idx;
+				parts[255 - recursion_count] = idx;
 
-				fallback0_count += old_count > 1 && old_count <= 128;
-				fallback1_count += old_count > 128;
+				if constexpr (can_small_sort) {
+					fallback0_count += old_count > 1 && old_count <= 128;
+				} else {
+					fallback0_count += old_count > 1 && old_count <= 32;
+				}
+				recursion_count += old_count > 128;
 
 				count          = total;
 				start_end[idx] = total;
@@ -1132,6 +1157,13 @@ namespace sort {
 				idx++;
 			}
 			start_end[256] = total;
+			if constexpr (!can_small_sort) {
+				for (size_t i = 0; i < 256; i++) {
+					size_t count                             = start_end[i + 1] - start_end[i];
+					parts[fallback0_count + fallback1_count] = idx;
+					fallback1_count += count > 32 && count <= 128;
+				}
+			}
 		}
 
 		// from skarupke's 2017 video, instead of sorting via the start of the array and
@@ -1177,36 +1209,37 @@ namespace sort {
 
 		// the recursion step
 		if (next.bytes) {
-			for (uint32_t p = 0; p < fallback0_count; p++) {
-				uint32_t i = parts[p];
-				if constexpr (::std::is_default_constructible<value_type>::value &&
-								std::is_same<typename ::std::iterator_traits<It>::iterator_category,
-												::std::random_access_iterator_tag>::value) {
+			if constexpr (can_small_sort) {
+				for (uint32_t p = 0; p < fallback0_count; p++) {
+					uint32_t i = parts[p];
 					sort::small_merge_sort(start + start_end[i], start + start_end[i + 1],
 									[](const auto& lhs, const auto& rhs) {
 										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
 									});
-				} else {
-					size_t items = (start_end[i + 1] - start_end[i]);
-					if (items <= insertion_sort_threshold) {
-						sort::insertion_sort(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-					} else {
-						sort::make_heap(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-						sort::sort_heap(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-					}
+				}
+			} else {
+				for (uint32_t p = 0; p < fallback0_count; p++) {
+					uint32_t i = parts[p];
+					sort::insertion_sort(start + start_end[i], start + start_end[i + 1],
+									[](const auto& lhs, const auto& rhs) {
+										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+									});
+				}
+
+				for (uint32_t p = 0; p < fallback1_count; p++) {
+					uint32_t i = parts[fallback0_count + p];
+					sort::make_heap(start + start_end[i], start + start_end[i + 1],
+									[](const auto& lhs, const auto& rhs) {
+										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+									});
+					sort::sort_heap(start + start_end[i], start + start_end[i + 1],
+									[](const auto& lhs, const auto& rhs) {
+										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+									});
 				}
 			}
 
-			for (uint32_t p = 0; p < fallback1_count; p++) {
+			for (uint32_t p = 0; p < recursion_count; p++) {
 				uint32_t i = parts[255 - p];
 				sort::counting_sort_byte_shift(start + start_end[i], start + start_end[i + 1], extract_key, next);
 			}
