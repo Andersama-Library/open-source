@@ -719,21 +719,11 @@ namespace sort {
 		}
 	}
 
-	struct tim_sort_range {
-		size_t first;
-		size_t last;
-	};
-
-	template<typename It, typename Compare> constexpr void timsort(It first, It last, Compare comp = Compare{})
-	{
-		size_t count = last - first;
-		if (count <= 2) {
-		}
-	}
-
 	struct counting_sort_bytes {
 		uint64_t idxs  = {};
 		uint8_t  bytes = {};
+		uint8_t  byte_idx  = {};
+		uint8_t  processed = {};
 	};
 
 	// NOTE: only exists because I *thought* I found a bug in MSVC AND CLANG codegen...
