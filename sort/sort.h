@@ -1972,15 +1972,13 @@ namespace sort {
 
 			// The start of one index is the end of another, we can compress the data into
 			// index pairs right next to each other
-			std::array<index_type, required_start_end_indexs> stack_data = {};
-			std::array<index_type, count_indexs>              counts; // we can reuse these for each recursion depth
+			index_type stack_data[required_start_end_indexs] = {0};
+			index_type counts[count_indexs];
 
-			std::array<uint16_t, sizeof(key_type)> progress = {};
-			std::array<uint16_t, sizeof(key_type)> recursion_count;
-			std::array<It, sizeof(key_type)>       its;
+			uint16_t progress[sizeof(key_type)] = {0};
+			uint16_t recursion_count[sizeof(key_type)];
+			It its[sizeof(key_type)];
 
-			// auto         mx_tu                 = sort::treat_as_unsigned(~max_key_type{0});
-			// auto         mn_tu                 = sort::treat_as_unsigned(max_key_type{0});
 			max_key_type mn                    = ~max_key_type{0};
 			max_key_type mx                    = max_key_type{0};
 			uint8_t      mxs[sizeof(key_type)] = {0};
@@ -1990,7 +1988,8 @@ namespace sort {
 
 			uint16_t                                    fallback0_count = 0;
 			uint16_t                                    fallback1_count = 0;
-			std::array<uint8_t, sizeof(key_type) * 256> idxs;
+			uint8_t                                     idxs[sizeof(key_type)*256];
+			//std::array<uint8_t, sizeof(key_type) * 256> idxs;
 
 			for (uint8_t& mn : mns)
 				mn = ~uint8_t{0};
