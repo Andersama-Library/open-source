@@ -255,6 +255,11 @@ namespace sort {
 		using is_transparent = int;
 	};
 
+	template<typename Callback> struct wrapped_greater_than : Callback {};
+
+	template<typename> struct is_wrapped_greater_than : std::false_type {};
+	template<typename Callback> struct is_wrapped_greater_than<wrapped_greater_than<Callback>> : std::true_type {};
+
 	template<typename> struct is_std_less : std::false_type {};
 	template<typename T> struct is_std_less<std::less<T>> : std::true_type {};
 
@@ -368,13 +373,6 @@ namespace sort {
 
 	template<typename It, typename Compare = sort::less<>> constexpr void sort_heap(It, It, Compare = Compare{});
 
-	template<typename It, typename ExtractKey, size_t Idx, size_t... Idxs, typename... Deferred>
-	constexpr void counting_sort_get_impl_rec(
-					It, It, ExtractKey, std::index_sequence<Idx, Idxs...>, parameter_list<Deferred...>);
-
-	template<typename It, typename ExtractKey, size_t Idx, size_t... Idxs>
-	constexpr void counting_sort_get_impl(It, It, ExtractKey, std::index_sequence<Idx, Idxs...>);
-
 	template<typename It> constexpr It prev_iter(It it)
 	{
 		return --it;
@@ -477,7 +475,7 @@ namespace sort {
 	}
 
 	template<typename It, typename It2, typename It3, typename It4, typename ItDest, typename Compare = std::less<>>
-	constexpr ItDest merge(It first0, It2 last0, It3 first1, It4 last1, ItDest out, Compare comp)
+	always_force_inline constexpr ItDest merge(It first0, It2 last0, It3 first1, It4 last1, ItDest out, Compare comp)
 	{
 		using T = sort::iter_value_t<It>;
 
@@ -591,15 +589,13 @@ namespace sort {
 		return out;
 	}
 
-	// WARNING: this algorithm is only ok for sorting up to 256 items! end-start <= 256
-	// BUGGED!
-	template<typename It, typename Compare = std::less<>>
-	constexpr void small_merge_sort(It start, It end, Compare comp = Compare{})
+	// WARNING: this algorithm is only ok for sorting up to N items! end-start <= N
+	template<typename It, typename Compare = std::less<>, size_t N = 256>
+	constexpr void small_merge_sort_size(It start, It end, Compare comp = Compare{}, size_t diff = N)
 	{
 		using value_type = sort::iter_value_t<It>;
-		std::array<value_type, 256> buffer;
+		std::array<value_type, N> buffer;
 
-		size_t diff   = end - start;
 		size_t stop   = (diff >> 2) + ((diff & 0x3) > 0);
 		size_t stride = 1;
 
@@ -640,8 +636,13 @@ namespace sort {
 				break;
 
 			stride = stride2;
-			// stride <<= 1;
 		}
+	}
+
+	template<typename It, typename Compare = std::less<>>
+	constexpr void small_merge_sort(It start, It end, Compare comp = Compare{})
+	{
+		return small_merge_sort_size(start, end, comp, end - start);
 	}
 
 	template<class ForwardIt, class UnaryPred>
@@ -720,8 +721,8 @@ namespace sort {
 	}
 
 	struct counting_sort_bytes {
-		uint64_t idxs  = {};
-		uint8_t  bytes = {};
+		uint64_t idxs      = {};
+		uint8_t  bytes     = {};
 		uint8_t  byte_idx  = {};
 		uint8_t  processed = {};
 	};
@@ -838,441 +839,6 @@ namespace sort {
 		}
 	}
 
-	// see: https://github.com/skarupke/ska_sort/blob/master/ska_sort.hpp as reference
-	template<typename It, typename ExtractKey>
-	release_force_inline constexpr void counting_sort_byte_shift(
-					It start, It end, ExtractKey extract_key, counting_sort_bytes remaining)
-	{
-		using value_type = sort::iter_value_t<It>;
-		using key_type   = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
-		static_assert(std::is_integral<key_type>::value, "extract_key must return an integral type!");
-
-		constexpr bool can_small_sort = ::std::is_default_constructible<value_type>::value &&
-										std::is_same<typename ::std::iterator_traits<It>::iterator_category,
-														::std::random_access_iterator_tag>::value;
-
-		uint32_t bit_shift = (remaining.idxs & 0xff) * 8;
-		--remaining.bytes;
-		remaining.idxs >>= 8;
-
-		size_t counts[256] = {0};
-		// The start of one index is the end of another, we can compress the data into
-		// index pairs right next to each other
-		size_t start_end[256 + 1];
-
-		uint16_t fallback0_count = 0;
-		uint16_t fallback1_count = 0;
-		uint16_t recursion_count = 0;
-		uint8_t  parts[256];
-		{
-			key_type mn = ~key_type{0};
-			key_type mx = key_type{0};
-
-			for (It it = start; it != end; ++it) {
-				key_type k = extract_key(*it);
-				++counts[(k >> bit_shift) & 0xff];
-				mn = k < mn ? k : mn;
-				mx = k > mx ? k : mx;
-			}
-
-			key_type diff = mx - mn;
-			switch (diff) {
-			case 1:
-				sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-			case 0:
-				return;
-			default:
-				break;
-			}
-		}
-
-		size_t total = 0;
-		// convert our counts to starting indexs
-		// IE, if we know we've seen 4 of some value
-		// then the current total is the index these values
-		// would start at and we know the total would increase by 4
-		uint32_t partitions = 0;
-		{
-			size_t idx = 0;
-			for (size_t& count : counts) {
-				size_t old_count = count;
-				partitions += count > 0;
-
-				parts[fallback0_count]       = idx;
-				parts[255 - recursion_count] = idx;
-				if constexpr (can_small_sort) {
-					fallback0_count += old_count > 1 && old_count <= 128;
-				} else {
-					fallback0_count += old_count > 1 && old_count <= 32;
-				}
-				recursion_count += old_count > 128;
-
-				count          = total;
-				start_end[idx] = total;
-				total += old_count;
-				idx++;
-			}
-			start_end[256] = total;
-			if constexpr (!can_small_sort) {
-				for (size_t i = 0; i < 256; i++) {
-					size_t count                             = start_end[i + 1] - start_end[i];
-					parts[fallback0_count + fallback1_count] = i;
-					fallback1_count += count > 32 && count <= 128;
-				}
-			}
-		}
-		// from skarupke's 2017 video, instead of sorting via the start of the array and
-		// continuously swapping the first element until it's in place
-		// instead we flip the algorithm around from the index's perspective
-		// NOTE: how this algorithm sorts, we create an array that gives away the end
-		//  state of how the array will be sorted! We can use this to a huge advantage!
-		//  While "count" is initially used to count how many items belong in each bin
-		//  we use it a second time to keep track of where to swap an item into that bin*
-		//  This means we effectively have 256 stack local vectors where:
-		//  count[key] < start_end[key+1] means we're not done sorting because
-		//  everything from start_end[key] -> count[key] is sorted
-		//  and count[key] -> start_end[key+1] might not be...
-		// BIG NOTE: Meaning start[key] to count[key] are sorted exactly where they want to be!
-		//  so instead of the cpu trampling all over itself we strictly
-		//  swap indexs we know are guaranteed to be out of position, so with minimal
-		//  book-keeping we only swap each out of position item once, this guarantees
-		//  we avoid memory dependencies on previous swaps! Allowing the cpu to absolutely blitz through
-		//  each swap and predict the remainder of the loops well in advance
-		if (partitions > 1) {
-			size_t sorted_count = 0;
-			do {
-				for (size_t x = 0; x < 256; x++) {
-					size_t s = counts[x];
-					size_t e = start_end[x + 1];
-					// this is so when we loop back around we start past the point we
-					// know the data is sorted, skarupke mention's swapping things around
-					// I'm not convinced that's a good idea, plus this is easy to program anyway
-					sorted_count += (e - s);
-					for (; s < e; s++) {
-						It      swap_left = start + s;
-						It      swap_target;
-						uint8_t key        = (extract_key(*swap_left) >> bit_shift) & 0xff;
-						size_t  target_idx = counts[key];
-						swap_target        = start + target_idx;
-
-						swap_branchless_unconditional(*swap_left, *swap_target);
-						counts[key] += 1;
-					}
-				}
-			} while (sorted_count < start_end[256]);
-		}
-
-		// the recursion step
-		if (remaining.bytes) {
-			if constexpr (can_small_sort) {
-				for (uint32_t p = 0; p < fallback0_count; p++) {
-					uint32_t i = parts[p];
-					sort::small_merge_sort(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-				}
-			} else {
-				for (uint32_t p = 0; p < fallback0_count; p++) {
-					uint32_t i = parts[p];
-					sort::insertion_sort(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-				}
-
-				for (uint32_t p = 0; p < fallback1_count; p++) {
-					uint32_t i = parts[fallback0_count + p];
-					sort::make_heap(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-					sort::sort_heap(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-				}
-			}
-
-			for (uint32_t p = 0; p < recursion_count; p++) {
-				uint32_t i = parts[255 - p];
-				sort::counting_sort_byte_shift(start + start_end[i], start + start_end[i + 1], extract_key, remaining);
-			}
-#if 0
-			for (uint32_t i = 0; i < 256; i++) {
-				size_t items = (start_end[i + 1] - start_end[i]);
-				if constexpr (::std::is_default_constructible<value_type>::value &&
-								std::is_same<typename ::std::iterator_traits<It>::iterator_category,
-												::std::random_access_iterator_tag>::value) {
-					if (items <= small_merge_sort_threshold) {
-						sort::small_merge_sort(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-					} else {
-						sort::counting_sort_byte_shift(
-										start + start_end[i], start + start_end[i + 1], extract_key, remaining);
-					}
-				} else {
-					if (items <= insertion_sort_threshold) {
-						sort::insertion_sort(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-					} else if (items <= intro_sort_threshold) {
-						sort::make_heap(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-						sort::sort_heap(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-					} else {
-						sort::counting_sort_byte_shift(
-										start + start_end[i], start + start_end[i + 1], extract_key, remaining);
-					}
-				}
-			}
-#endif
-		}
-	}
-
-	template<typename It, typename ExtractKey>
-	release_force_inline constexpr void counting_sort_byte_shift_dynamic(It start, It end, ExtractKey extract_key)
-	{
-		using value_type = sort::iter_value_t<It>;
-		using key_type   = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
-		static_assert(std::is_integral<key_type>::value, "extract_key must return an integral type!");
-
-		constexpr bool can_small_sort = ::std::is_default_constructible<value_type>::value &&
-										std::is_same<typename ::std::iterator_traits<It>::iterator_category,
-														::std::random_access_iterator_tag>::value;
-
-		size_t counts[256] = {0};
-		// The start of one index is the end of another, we can compress the data into
-		// index pairs right next to each other
-		size_t   start_end[256 + 1];
-		key_type mn = ~key_type{0};
-		key_type mx = key_type{0};
-
-		uint8_t parts[256];
-		uint8_t mxs[sizeof(key_type)] = {0};
-		uint8_t mns[sizeof(key_type)];
-		uint8_t last_key[sizeof(key_type)] = {0};
-		uint8_t keys_ordered[sizeof(key_type)];
-
-		for (uint8_t& mn : mns)
-			mn = ~uint8_t{0};
-
-		for (uint8_t& ok : keys_ordered)
-			ok = true;
-
-		for (It it = start; it != end; ++it) {
-			key_type k = extract_key(*it);
-			for (size_t x = 0; x < sizeof(key_type); x++) {
-				uint8_t key_byte = ((k >> (x * 8)) & 0xff);
-				mns[x]           = key_byte < mns[x] ? key_byte : mns[x];
-				mxs[x]           = key_byte > mxs[x] ? key_byte : mxs[x];
-				keys_ordered[x]  = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
-				last_key[x]      = key_byte;
-			}
-			mn = k < mn ? k : mn;
-			mx = k > mx ? k : mx;
-		}
-
-		// array of all the same values
-		{
-			key_type diff = mx - mn;
-			switch (diff) {
-			case 1:
-				sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-			case 0:
-				return;
-			default:
-				break;
-			}
-		}
-
-		counting_sort_bytes next{};
-		// find the first byte that we can sort off of
-		/// uint32_t bytes_needing_sorting = 0;
-		for (uint32_t x = sizeof(key_type); --x < sizeof(key_type);) {
-			bool bit_range = mns[x] != mxs[x];
-			next.idxs |= (x << (8 * next.bytes)) * bit_range;
-			next.bytes += bit_range;
-		}
-
-		uint32_t bit_shift = (next.idxs & 0xff) * 8;
-		--next.bytes;
-		next.idxs >>= 8;
-
-		// size_t diff = mxs[bit_shift>>3] - mn[bit_shift>>3];
-		// if (diff == 0)
-		//	return;
-		// if (diff == 1)
-		//	return sort::partition(start, end, [&mn](const auto& v) { return mn <= ExtractKey{}(v); });
-		for (It it = start; it != end; ++it) {
-			key_type k   = extract_key(*it);
-			uint8_t  idx = (k >> bit_shift) & 0xff;
-			++counts[idx];
-		}
-		// convert our counts to starting indexs
-		// IE, if we know we've seen 4 of some value
-		// then the current total is the index these values
-		// would start at and we know the total would increase by 4
-		// uint32_t partitions = 0;
-		uint16_t fallback0_count = 0;
-		uint16_t fallback1_count = 0;
-		uint16_t recursion_count = 0;
-		{
-			size_t idx   = 0;
-			size_t total = 0;
-			for (size_t& count : counts) {
-				size_t old_count = count;
-				// partitions += old_count > 0;
-				parts[fallback0_count]       = idx;
-				parts[255 - recursion_count] = idx;
-
-				if constexpr (can_small_sort) {
-					fallback0_count += old_count > 1 && old_count <= 128;
-				} else {
-					fallback0_count += old_count > 1 && old_count <= 32;
-				}
-				recursion_count += old_count > 128;
-
-				count          = total;
-				start_end[idx] = total;
-				total += old_count;
-				idx++;
-			}
-			start_end[256] = total;
-			if constexpr (!can_small_sort) {
-				for (size_t i = 0; i < 256; i++) {
-					size_t count                             = start_end[i + 1] - start_end[i];
-					parts[fallback0_count + fallback1_count] = idx;
-					fallback1_count += count > 32 && count <= 128;
-				}
-			}
-		}
-
-		// from skarupke's 2017 video, instead of sorting via the start of the array and
-		// continuously swapping the first element until it's in place
-		// instead we flip the algorithm around from the index's perspective
-		// NOTE: how this algorithm sorts, we create an array that gives away the end
-		//  state of how the array will be sorted! We can use this to a huge advantage!
-		//  While "count" is initially used to count how many items belong in each bin
-		//  we use it a second time to keep track of where to swap an item into that bin*
-		//  This means we effectively have 256 stack local vectors where:
-		//  count[key] < start_end[key+1] means we're not done sorting because
-		//  everything from start_end[key] -> count[key] is sorted
-		//  and count[key] -> start_end[key+1] might not be...
-		// BIG NOTE: Meaning start[key] to count[key] are sorted exactly where they want to be!
-		//  so instead of the cpu trampling all over itself we strictly
-		//  swap indexs we know are guaranteed to be out of position, so with minimal
-		//  book-keeping we only swap each out of position item once, this guarantees
-		//  we avoid memory dependencies on previous swaps! Allowing the cpu to absolutely blitz through
-		//  each swap and predict the remainder of the loops well in advance
-		if ((mxs[bit_shift >> 3] - mns[bit_shift >> 3]) > 1 && !keys_ordered[bit_shift >> 3]) {
-			size_t sorted_count = 0;
-			do {
-				for (size_t x = 0; x < 256; x++) {
-					size_t s = counts[x];
-					size_t e = start_end[x + 1];
-					// this is so when we loop back around we start past the point we
-					// know the data is sorted, skarupke mention's swapping things around
-					// I'm not convinced that's a good idea, plus this is easy to program anyway
-					sorted_count += (e - s);
-					for (; s < e; s++) {
-						It      swap_left = start + s;
-						It      swap_target;
-						uint8_t key        = (extract_key(*swap_left) >> bit_shift) & 0xff;
-						size_t  target_idx = counts[key];
-						swap_target        = start + target_idx;
-
-						sort::swap_branchless_unconditional(*swap_left, *swap_target);
-						counts[key] += 1;
-					}
-				}
-			} while (sorted_count < start_end[256]);
-		}
-
-		// the recursion step
-		if (next.bytes) {
-			if constexpr (can_small_sort) {
-				for (uint32_t p = 0; p < fallback0_count; p++) {
-					uint32_t i = parts[p];
-					sort::small_merge_sort(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-				}
-			} else {
-				for (uint32_t p = 0; p < fallback0_count; p++) {
-					uint32_t i = parts[p];
-					sort::insertion_sort(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-				}
-
-				for (uint32_t p = 0; p < fallback1_count; p++) {
-					uint32_t i = parts[fallback0_count + p];
-					sort::make_heap(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-					sort::sort_heap(start + start_end[i], start + start_end[i + 1],
-									[](const auto& lhs, const auto& rhs) {
-										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
-				}
-			}
-
-			for (uint32_t p = 0; p < recursion_count; p++) {
-				uint32_t i = parts[255 - p];
-				sort::counting_sort_byte_shift(start + start_end[i], start + start_end[i + 1], extract_key, next);
-			}
-#if 0
-			for (uint32_t i = 0; i < 256; i++) {
-				size_t items = (start_end[i + 1] - start_end[i]);
-				if constexpr (::std::is_default_constructible<value_type>::value &&
-								std::is_same<typename ::std::iterator_traits<It>::iterator_category,
-												::std::random_access_iterator_tag>::value) {
-					if (items <= small_merge_sort_threshold) {
-						sort::small_merge_sort(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-					} else {
-						sort::counting_sort_byte_shift(
-										start + start_end[i], start + start_end[i + 1], extract_key, next);
-					}
-				} else {
-					if (items <= insertion_sort_threshold) {
-						sort::insertion_sort(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-					} else if (items <= intro_sort_threshold) {
-						sort::make_heap(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-						sort::sort_heap(start + start_end[i], start + start_end[i + 1],
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-					} else {
-						sort::counting_sort_byte_shift(
-										start + start_end[i], start + start_end[i + 1], extract_key, next);
-					}
-				}
-			}
-#endif
-		}
-	}
-
 	template<typename T> constexpr size_t bytes_required(T v)
 	{
 #if defined __has_include
@@ -1313,512 +879,12 @@ namespace sort {
 		return N;
 	}
 
-	template<typename It, typename ExtractKey>
-	constexpr void counting_sort_byte_shift_flat(It start, It end, ExtractKey extract_key)
-	{
-		using value_type = sort::iter_value_t<It>;
-		using key_type   = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
-		using index_type = size_t;
-
-#if defined __has_include
-#if __has_include(<bitset>)
-		using max_key_type = typename std::conditional<is_bitset<key_type>::value, key_type,
-						decltype(sort::treat_as_unsigned_rshifted(std::declval<key_type>(), 0))>::type;
-#else
-		using max_key_type = decltype(sort::treat_as_unsigned_rshifted(std::declval<key_type>(), 0));
-#endif
-#else
-		using max_key_type = decltype(sort::treat_as_unsigned_rshifted(std::declval<key_type>(), 0));
-#endif
-
-		if constexpr (::std::is_same<key_type, bool>::value
-#if defined __has_include
-#if __has_include(<bitset>)
-						|| (is_bitset<key_type>::value && bitset_size(key_type()) == 1)
-#endif
-#endif
-		) {
-			max_key_type mx = max_key_type{1};
-			// std::partition(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-			sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-		} else if constexpr (true) {
-			// constexpr size_t initial_count_indexs      = 256 * sizeof(key_type);
-			constexpr size_t required_start_end_indexs = 257 * sizeof(key_type);
-			constexpr size_t count_indexs              = 256;
-			constexpr size_t start_end_indexs          = 257;
-
-			// The start of one index is the end of another, we can compress the data into
-			// index pairs right next to each other
-			std::array<index_type, required_start_end_indexs> stack_data = {};
-			std::array<index_type, count_indexs>              counts; // we can reuse these for each recursion depth
-
-			std::array<uint16_t, sizeof(key_type)> progress = {};
-			std::array<It, sizeof(key_type)>       its;
-
-			max_key_type mn                    = ~max_key_type{0};
-			max_key_type mx                    = max_key_type{0};
-			uint8_t      mxs[sizeof(key_type)] = {0};
-			uint8_t      mns[sizeof(key_type)];
-			uint8_t      last_key[sizeof(key_type)] = {0};
-			uint8_t      keys_ordered[sizeof(key_type)];
-
-			for (uint8_t& mn : mns)
-				mn = ~uint8_t{0};
-
-			for (uint8_t& ok : keys_ordered)
-				ok = true;
-
-			for (It it = start; it != end; ++it) {
-				key_type k = extract_key(*it);
-				if constexpr (is_bitset<key_type>::value || ::std::is_integral<key_type>::value) {
-					mn = k < mn ? k : mn;
-					mx = k > mx ? k : mx;
-				} else if constexpr (::std::is_floating_point<key_type>::value) {
-					max_key_type uk = sort::treat_as_unsigned(k);
-					mn              = uk < mn ? uk : mn;
-					mx              = uk > mx ? uk : mx;
-				}
-
-				for (size_t x = 0; x < sizeof(key_type); x++) {
-					uint8_t key_byte;
-					if constexpr (!std::is_integral<key_type>::value) {
-						key_byte = (uint8_t)sort::treat_as_unsigned_rshifted(
-										k, (uint32_t)(x * 8)); // treat_as_unsigned(sort::treat_as_unsigned(k) >> (x *
-															   // 8)) & 0xff;
-					} else {
-						key_byte = ((k >> (x * 8)) & 0xff);
-					}
-
-					mns[x]          = key_byte < mns[x] ? key_byte : mns[x];
-					mxs[x]          = key_byte > mxs[x] ? key_byte : mxs[x];
-					keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
-					last_key[x]     = key_byte;
-
-					++stack_data[(count_indexs * x) + key_byte];
-				}
-			}
-
-			// array of all the same values
-			if constexpr (!std::is_floating_point<key_type>::value && !is_bitset<key_type>::value) {
-				key_type diff = mx - mn;
-				switch (diff) {
-				case 1:
-					sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-				case 0:
-					return;
-				default:
-					break;
-				}
-			} else if constexpr (std::is_floating_point<key_type>::value) {
-				auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
-				switch (diff) {
-				case 1:
-					sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-				case 0:
-					return;
-				default:
-					break;
-				}
-			} else if constexpr (is_bitset<key_type>::value) {
-				if constexpr (bitset_size(key_type()) > 64) {
-					key_type xor_diff  = (mx ^ mn);
-					size_t   xor_count = xor_diff.count();
-					size_t   mx_count  = mx.count();
-					size_t   mn_count  = mn.count();
-					if (xor_diff[0] && (mx_count == 1 || mn_count == 1) && (mx_count + mn_count == xor_count)) {
-						bool all_strictly_ones = true;
-						// we're looking for patterns of partitioned 1s and 0s
-						{
-							uint32_t i = 1;
-							for (; i < xor_diff.size();) {
-								bool strictly_ones = xor_diff[i];
-								i += 1;
-								if (!strictly_ones)
-									break;
-							}
-							bool strictly_ones = false;
-							for (; i < xor_diff.size();) {
-								strictly_ones = xor_diff[i];
-								i += 1;
-								if (strictly_ones)
-									break;
-							}
-							all_strictly_ones = all_strictly_ones && strictly_ones;
-						}
-						{
-							uint32_t i = 0;
-							for (; i < mn.size();) {
-								bool strictly_ones = mn[i];
-								i += 1;
-								if (!strictly_ones)
-									break;
-							}
-							bool strictly_ones = false;
-							for (; i < mn.size();) {
-								strictly_ones = mn[i];
-								i += 1;
-								if (strictly_ones)
-									break;
-							}
-							all_strictly_ones = all_strictly_ones && strictly_ones;
-						}
-						{
-							uint32_t i = 0;
-							for (; i < mx.size();) {
-								bool strictly_ones = mx[i];
-								i += 1;
-								if (!strictly_ones)
-									break;
-							}
-							bool strictly_ones = false;
-							for (; i < mx.size();) {
-								strictly_ones = mx[i];
-								i += 1;
-								if (strictly_ones)
-									break;
-							}
-							all_strictly_ones = all_strictly_ones && strictly_ones;
-						}
-
-						if (!all_strictly_ones) {
-							sort::partition_branchless(
-											start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-							return;
-						}
-					} else if (xor_count == 0) {
-						return;
-					}
-				} else {
-					auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
-					switch (diff) {
-					case 1:
-						sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-					case 0:
-						return;
-					default:
-						break;
-					}
-				}
-			}
-
-			counting_sort_bytes next{};
-			uint8_t             depth = 0;
-			// find the first byte that we can sort off of
-
-			for (uint32_t x = sizeof(key_type); --x < sizeof(key_type);) {
-				bool bit_range = mns[x] != mxs[x];
-				next.idxs |= (x << (8 * next.bytes)) * bit_range;
-				next.bytes += bit_range;
-			}
-
-			its[0]              = start;
-			uint32_t partitions = 0;
-			{ // convert counts to prefix sum
-				size_t   idx          = 0;
-				size_t   total        = 0; // our paritioning start->end is only good for the current depth (0)
-				uint16_t current_byte = (next.idxs >> (depth * 8)) & 0xff;
-				for (; idx < 256;) {
-					size_t count = stack_data[(current_byte * count_indexs) +
-											  idx]; // so we take the data for the count here
-
-					partitions += count > 0;
-					counts[idx]     = total;
-					stack_data[idx] = total; // and make it a running total here
-					total += count;
-					idx++;
-				}
-				stack_data[256] = total; // last we append the actual total at the end here
-			}
-
-			switch (partitions) {
-			case 2:
-				sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-				[[fallthrough]];
-			case 1:
-				[[fallthrough]];
-			case 0:
-				return;
-			default:
-				break;
-			}
-
-			auto start_it = its[depth];
-
-			uint32_t bit_shift = ((next.idxs >> (depth * 8)) & 0xff) * 8;
-			if (!keys_ordered[bit_shift >> 3]) {
-				size_t sorted_count = 0;
-				do {
-					for (size_t x = 0; x < 256; x++) {
-						size_t s = counts[x];                                      // counts[depth][x];
-						size_t e = stack_data[(depth * start_end_indexs) + x + 1]; // start_end[depth][x + 1];
-						// this is so when we loop back around we start past the point we
-						// know the data is sorted, skarupke mention's swapping things around
-						// I'm not convinced that's a good idea, plus this is easy to program anyway
-						sorted_count += (e - s);
-						for (; s < e; s++) {
-							It      swap_left = start_it + s;
-							It      swap_target;
-							uint8_t key        = (uint8_t)sort::treat_as_unsigned_rshifted(extract_key(*swap_left),
-												   bit_shift); //(extract_key(*swap_left) >> bit_shift) & 0xff;
-							size_t  target_idx = counts[key];
-							swap_target        = start_it + target_idx;
-
-							sort::swap_branchless_unconditional(*swap_left, *swap_target);
-							counts[key] += 1;
-						}
-					}
-				} while (sorted_count < stack_data[(depth * start_end_indexs) + 256]);
-			}
-			// no recursion needed, every item had a dedicated location
-			if (partitions == (end - start) || next.bytes <= 1)
-				return;
-
-			for (;;) {
-				//  the recursion step
-				for (; progress[depth] < 256; ++progress[depth]) {
-					uint16_t       progress_idx   = progress[depth];
-					size_t         start_offset   = stack_data[(depth * start_end_indexs) + progress_idx];
-					size_t         end_offset     = stack_data[(depth * start_end_indexs) + progress_idx + 1];
-					size_t         items          = end_offset - start_offset;
-					constexpr bool can_small_sort = ::std::is_default_constructible<value_type>::value &&
-													std::is_same<typename ::std::iterator_traits<It>::iterator_category,
-																	::std::random_access_iterator_tag>::value;
-					// skip where we have 0 items to process
-					if (false && can_small_sort && items <= small_merge_sort_threshold) { // should optimize away
-						// this should "bubble" up, marking this region as definitely sorted
-						sort::small_merge_sort(start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-					} else if (items <= insertion_sort_threshold) { // should optimize away
-						// this should "bubble" up, marking this region as definitely sorted
-						sort::insertion_sort(start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-					} else if (items <= intro_sort_threshold) { // should optimize away
-						// this should "bubble" up, marking this region as definitely sorted
-						sort::make_heap(start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-						sort::sort_heap(start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-					} else {
-						mn = ~key_type{0};
-						mx = key_type{0};
-						// do normal count
-						uint16_t next_depth = depth + 1;
-						It       end_it     = start_it + end_offset;
-						// setup to process the next depth
-						for (size_t& count : counts)
-							count = 0;
-
-						uint8_t last_key     = 0;
-						uint8_t keys_ordered = true;
-
-						uint32_t bit_shift = ((next.idxs >> (next_depth * 8)) & 0xff) * 8;
-						for (It it = start_it + start_offset; it != end_it; ++it) {
-							key_type k = extract_key(*it);
-							uint8_t  key_byte;
-
-							if constexpr (is_bitset<key_type>::value) {
-								mn       = k < mn ? k : mn;
-								mx       = k > mx ? k : mx;
-								key_byte = sort::treat_as_unsigned_rshifted(k, bit_shift) & 0xff;
-							} else if constexpr (::std::is_integral<key_type>::value) {
-								mn       = k < mn ? k : mn;
-								mx       = k > mx ? k : mx;
-								key_byte = k >> bit_shift;
-							} else { // if constexpr (::std::is_floating_point<key_type>::value)
-								max_key_type uk = sort::treat_as_unsigned(k);
-								mn              = uk < mn ? uk : mn;
-								mx              = uk > mx ? uk : mx;
-								key_byte        = uk >> bit_shift;
-							}
-
-							keys_ordered = keys_ordered & (uint8_t)(last_key <= key_byte);
-							last_key     = key_byte;
-
-							++counts[key_byte];
-						}
-
-						if constexpr (!std::is_floating_point<key_type>::value && !is_bitset<key_type>::value) {
-							key_type diff = mx - mn;
-							switch (diff) {
-							case 1:
-								sort::partition_branchless(start_it + start_offset, end_it,
-												[&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-								[[fallthrough]];
-							case 0:
-								continue;
-							default:
-								break;
-							}
-						} else if constexpr (std::is_floating_point<key_type>::value) {
-							auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
-							switch (diff) {
-							case 1:
-								sort::partition_branchless(start_it + start_offset, end_it,
-												[&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-								[[fallthrough]];
-							case 0:
-								continue;
-							default:
-								break;
-							}
-						} else if constexpr (is_bitset<key_type>::value) {
-							if constexpr (bitset_size(key_type()) > 64) {
-								key_type xor_diff  = (mx ^ mn);
-								size_t   xor_count = xor_diff.count();
-								size_t   mx_count  = mx.count();
-								size_t   mn_count  = mn.count();
-								if (xor_diff[0] && (mx_count == 1 || mn_count == 1) &&
-												(mx_count + mn_count == xor_count)) {
-									bool all_strictly_ones = true;
-									// we're looking for patterns of partitioned 1s and 0s
-									{
-										uint32_t i = 1;
-										for (; i < xor_diff.size();) {
-											bool strictly_ones = xor_diff[i];
-											i += 1;
-											if (!strictly_ones)
-												break;
-										}
-										bool strictly_ones = false;
-										for (; i < xor_diff.size();) {
-											strictly_ones = xor_diff[i];
-											i += 1;
-											if (strictly_ones)
-												break;
-										}
-										all_strictly_ones = all_strictly_ones && strictly_ones;
-									}
-									{
-										uint32_t i = 0;
-										for (; i < mn.size();) {
-											bool strictly_ones = mn[i];
-											i += 1;
-											if (!strictly_ones)
-												break;
-										}
-										bool strictly_ones = false;
-										for (; i < mn.size();) {
-											strictly_ones = mn[i];
-											i += 1;
-											if (strictly_ones)
-												break;
-										}
-										all_strictly_ones = all_strictly_ones && strictly_ones;
-									}
-									{
-										uint32_t i = 0;
-										for (; i < mx.size();) {
-											bool strictly_ones = mx[i];
-											i += 1;
-											if (!strictly_ones)
-												break;
-										}
-										bool strictly_ones = false;
-										for (; i < mx.size();) {
-											strictly_ones = mx[i];
-											i += 1;
-											if (strictly_ones)
-												break;
-										}
-										all_strictly_ones = all_strictly_ones && strictly_ones;
-									}
-
-									if (!all_strictly_ones) {
-										sort::partition_branchless(start_it + start_offset, end_it,
-														[&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-										continue;
-									}
-								} else if (xor_count == 0) {
-									continue;
-								}
-							} else {
-								auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
-								switch (diff) {
-								case 1:
-									sort::partition_branchless(start_it + start_offset, end_it,
-													[&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-									[[fallthrough]];
-								case 0:
-									continue;
-								default:
-									break;
-								}
-							}
-						}
-
-						uint32_t partitions = 0;
-						{ // convert counts to prefix sum
-							size_t idx   = 0;
-							size_t total = 0;
-							for (size_t& count : counts) {
-								size_t old_count = count;
-								partitions += old_count > 0;
-								count                                             = total;
-								stack_data[(next_depth * start_end_indexs) + idx] = total;
-								counts[idx]                                       = total;
-								total += old_count;
-								idx++;
-							}
-							stack_data[(next_depth * start_end_indexs) + 256] = total;
-						}
-
-						its[next_depth] = start_it + start_offset;
-
-						if (!keys_ordered) {
-							auto   next_start_it = its[next_depth];
-							size_t sorted_count  = 0;
-							do {
-								for (size_t x = 0; x < 256; x++) {
-									size_t s = counts[x];
-									size_t e = stack_data[(next_depth * start_end_indexs) + x + 1];
-									// this is so when we loop back around we start past the point we
-									// know the data is sorted, skarupke mention's swapping things around
-									// I'm not convinced that's a good idea, plus this is easy to program anyway
-									sorted_count += (e - s);
-									for (; s < e; s++) {
-										It      swap_left = next_start_it + s;
-										It      swap_target;
-										uint8_t key = (uint8_t)sort::treat_as_unsigned_rshifted(
-														extract_key(*swap_left), bit_shift);
-										size_t target_idx = counts[key];
-										swap_target       = next_start_it + target_idx;
-
-										sort::swap_branchless_unconditional(*swap_left, *swap_target);
-										counts[key] += 1;
-									}
-								}
-							} while (sorted_count <
-											stack_data[(next_depth * start_end_indexs) + 256]); // start_end[256]
-						}
-						// we don't need to recurse if the # of items matches, or we're at the max depth already
-						if (partitions == items || (next_depth >= (next.bytes - 1)))
-							continue;
-						// progress[depth] += 1;
-						progress[next_depth] = 0;
-						break; // we'll go deeper
-					}
-				}
-
-				if (depth == 0 && progress[0] >= 256)
-					break;
-				// progress[depth] += 1;
-				bool deeper = (progress[depth] < 256);
-				depth += deeper ? 1 : -1;
-				progress[depth] += !deeper;
-				start_it = its[depth];
-			}
-		}
-	}
-
 	template<typename Callback, size_t... Idxs> struct defer_callback {
+		using callback = Callback;
+		using idxs     = std::index_sequence<Idxs...>;
+	};
+
+	template<typename Callback, size_t... Idxs> struct defer_callback_reversed {
 		using callback = Callback;
 		using idxs     = std::index_sequence<Idxs...>;
 	};
@@ -1857,8 +923,9 @@ namespace sort {
 	}
 
 	template<typename It, typename ExtractKey, size_t Idx, size_t... Idxs, typename... Deferred>
-	constexpr void counting_sort_impl_recursive(It start, It end, ExtractKey extract_key,
-					std::index_sequence<Idx, Idxs...>, parameter_list<Deferred...>)
+	constexpr void counting_sort_recursive(It start, It end, ExtractKey extract_key,
+					std::index_sequence<Idx, Idxs...> = {}, sort::parameter_list<Deferred...> = {},
+					sort::counting_sort_bytes remaining = {})
 	{
 		using namespace sort;
 		using value_type   = sort::iter_value_t<It>;
@@ -1867,17 +934,48 @@ namespace sort {
                         std::declval<It>(), ExtractKey{}))>;
 		// sort::remove_cvref_t<decltype(::std::get<Idx>(ExtractKey{}(*std::declval<It>())))>; // this works for both
 		// tuples and arrays
-		if constexpr (is_tuple<key_type>::value) {
-			if constexpr (sizeof...(Idxs)) {
-				return counting_sort_impl_recursive(
-								start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
-								std::make_index_sequence<std::tuple_size<key_type>::value>{},
-								parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{});
-			} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
-				return counting_sort_impl_recursive(
-								start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
-								std::make_index_sequence<std::tuple_size<key_type>::value>{},
-								parameter_list<Deferred...>{});
+		if constexpr (sort::is_tuple<key_type>::value) {
+			remaining.bytes    = 0;
+			remaining.byte_idx = 0;
+			if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+							::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+				if constexpr (sizeof...(Idxs)) {
+					return sort::counting_sort_recursive(start, end,
+									sort::wrapped_greater_than{[](const auto& v) { return ::std::get<Idx>(v); }},
+									std::make_index_sequence<std::tuple_size<key_type>::value>{},
+									parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{}, remaining);
+				} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
+					return sort::counting_sort_recursive(start, end,
+									sort::wrapped_greater_than{[](const auto& v) { return ::std::get<Idx>(v); }},
+									std::make_index_sequence<std::tuple_size<key_type>::value>{},
+									parameter_list<Deferred...>{}, remaining);
+				}
+			} else if constexpr (sort::is_wrapped_greater_than<ExtractKey>::value) {
+				if constexpr (sizeof...(Idxs)) {
+					return sort::counting_sort_recursive(start, end, sort::wrapped_greater_than{[](const auto& v) {
+						return ::std::get<Idx>(ExtractKey{}(v));
+					}},
+									std::make_index_sequence<std::tuple_size<key_type>::value>{},
+									parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{}, remaining);
+				} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
+					return sort::counting_sort_recursive(start, end, sort::wrapped_greater_than{[](const auto& v) {
+						return ::std::get<Idx>(ExtractKey{}(v));
+					}},
+									std::make_index_sequence<std::tuple_size<key_type>::value>{},
+									parameter_list<Deferred...>{}, remaining);
+				}
+			} else {
+				if constexpr (sizeof...(Idxs)) {
+					return sort::counting_sort_recursive(
+									start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
+									std::make_index_sequence<std::tuple_size<key_type>::value>{},
+									parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{}, remaining);
+				} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
+					return sort::counting_sort_recursive(
+									start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
+									std::make_index_sequence<std::tuple_size<key_type>::value>{},
+									parameter_list<Deferred...>{}, remaining);
+				}
 			}
 		} else if constexpr (std::is_same<key_type, bool>::value
 #if defined __has_include
@@ -1897,36 +995,74 @@ namespace sort {
 			using max_key_type = decltype(sort::treat_as_unsigned_rshifted(std::declval<key_type>(), 0));
 #endif
 
-			max_key_type mx = max_key_type{1};
-			auto split = sort::partition_branchless(start, end, [&mx](const auto& v) { return ExtractKey{}(v) < mx; });
-			if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
-				if constexpr (sizeof...(Idxs)) {
-					counting_sort_impl_recursive(start, split, extract_key, std::index_sequence<Idxs...>{},
-									parameter_list<Deferred...>{});
-					return counting_sort_impl_recursive(split, end, extract_key, std::index_sequence<Idxs...>{},
-									parameter_list<Deferred...>{});
+			It split;
+			if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+							::std::is_same<identity_greater_than<key_type>, ExtractKey>::value ||
+							sort::is_wrapped_greater_than<ExtractKey>::value) {
+				if constexpr (std::is_same<key_type, bool>::value) {
+					split = sort::partition_branchless(start, end, [](const auto& v) { return ExtractKey{}(v); });
 				} else {
-					using popped_list    = decltype(pop_front(parameter_list<Deferred...>{}));
-					using first_deferred = decltype(front(parameter_list<Deferred...>{}));
-					counting_sort_impl_recursive(start, split, typename first_deferred::callback{},
-									typename first_deferred::idxs{}, popped_list{});
-					return counting_sort_impl_recursive(split, end, typename first_deferred::callback{},
-									typename first_deferred::idxs{}, popped_list{});
+					split = sort::partition_branchless(start, end, [](const auto& v) { return ExtractKey{}(v)[0]; });
+				}
+			} else {
+				if constexpr (std::is_same<key_type, bool>::value) {
+					split = sort::partition_branchless(start, end, [](const auto& v) { return !ExtractKey{}(v); });
+				} else {
+					split = sort::partition_branchless(start, end, [](const auto& v) { return !ExtractKey{}(v)[0]; });
 				}
 			}
-		} else if constexpr (is_array<key_type>::value) {
-			if constexpr (sizeof...(Idxs)) {
-				return counting_sort_impl_recursive(
-								start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
-								sort::make_reversed_index_sequence(
-												std::make_index_sequence<std::tuple_size<key_type>::value>{}),
-								parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{});
-			} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
-				return counting_sort_impl_recursive(
-								start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
-								sort::make_reversed_index_sequence(
-												std::make_index_sequence<std::tuple_size<key_type>::value>{}),
-								parameter_list<Deferred...>{});
+			if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
+				remaining.bytes    = 0;
+				remaining.byte_idx = 0;
+				if constexpr (sizeof...(Idxs)) {
+					sort::counting_sort_recursive(start, split, extract_key, std::index_sequence<Idxs...>{},
+									parameter_list<Deferred...>{});
+					return sort::counting_sort_recursive(split, end, extract_key, std::index_sequence<Idxs...>{},
+									parameter_list<Deferred...>{}, remaining);
+				} else {
+					using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
+					using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
+					sort::counting_sort_recursive(start, split, typename first_deferred::callback{},
+									typename first_deferred::idxs{}, popped_list{}, remaining);
+					return sort::counting_sort_recursive(split, end, typename first_deferred::callback{},
+									typename first_deferred::idxs{}, popped_list{}, remaining);
+				}
+			}
+		} else if constexpr (sort::is_array<key_type>::value) {
+			remaining.bytes    = 0;
+			remaining.byte_idx = 0;
+			if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+							::std::is_same<identity_greater_than<key_type>, ExtractKey>::value ||
+							sort::is_wrapped_greater_than<ExtractKey>::value) {
+				if constexpr (sizeof...(Idxs)) {
+					return sort::counting_sort_recursive(start, end, sort::wrapped_greater_than{[](const auto& v) {
+						return ::std::get<Idx>(ExtractKey{}(v));
+					}},
+									sort::make_reversed_index_sequence(
+													std::make_index_sequence<std::tuple_size<key_type>::value>{}),
+									parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{}, remaining);
+				} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
+					return sort::counting_sort_recursive(start, end, sort::wrapped_greater_than{[](const auto& v) {
+						return ::std::get<Idx>(ExtractKey{}(v));
+					}},
+									sort::make_reversed_index_sequence(
+													std::make_index_sequence<std::tuple_size<key_type>::value>{}),
+									parameter_list<Deferred...>{}, remaining);
+				}
+			} else {
+				if constexpr (sizeof...(Idxs)) {
+					return sort::counting_sort_recursive(
+									start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
+									sort::make_reversed_index_sequence(
+													std::make_index_sequence<std::tuple_size<key_type>::value>{}),
+									parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{}, remaining);
+				} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
+					return sort::counting_sort_recursive(
+									start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
+									sort::make_reversed_index_sequence(
+													std::make_index_sequence<std::tuple_size<key_type>::value>{}),
+									parameter_list<Deferred...>{}, remaining);
+				}
 			}
 		} else {
 #if defined __has_include
@@ -1962,390 +1098,172 @@ namespace sort {
 
 			// The start of one index is the end of another, we can compress the data into
 			// index pairs right next to each other
-			index_type stack_data[required_start_end_indexs] = {0};
-			index_type counts[count_indexs];
+			// std::array<index_type, start_end_indexs> stack_data;
+			// std::array<index_type, count_indexs>     counts; // we can reuse these for each recursion depth
+			// std::array<uint8_t, 256> idxs;
+			alignas(16) index_type counts[count_indexs];
+			alignas(16) index_type stack_data[start_end_indexs];
+			alignas(16) uint8_t    idxs[256];
 
-			uint16_t progress[sizeof(key_type)] = {0};
-			uint16_t recursion_count[sizeof(key_type)];
-			It its[sizeof(key_type)];
+			uint16_t fallback0_count = 0;
+			uint16_t fallback1_count = 0;
+			uint16_t recursion_count = 0;
 
-			max_key_type mn                    = ~max_key_type{0};
-			max_key_type mx                    = max_key_type{0};
-			uint8_t      mxs[sizeof(key_type)] = {0};
-			uint8_t      mns[sizeof(key_type)];
-			uint8_t      last_key[sizeof(key_type)] = {0};
-			uint8_t      keys_ordered[sizeof(key_type)];
+			sort::counting_sort_bytes next{};
+			for (uint64_t x = sizeof(key_type); --x < sizeof(key_type);) {
+				next.idxs |= (x << (8 * next.bytes));
+				next.bytes += 1;
+			}
+			remaining.idxs  = next.idxs;
+			remaining.bytes = next.bytes;
 
-			uint16_t                                    fallback0_count = 0;
-			uint16_t                                    fallback1_count = 0;
-			uint8_t                                     idxs[sizeof(key_type)*256];
-			//std::array<uint8_t, sizeof(key_type) * 256> idxs;
+			uint32_t x = remaining.bytes ? ((remaining.idxs >> (remaining.byte_idx << 3)) & 0xff) : sizeof(key_type) - 1;
 
-			for (uint8_t& mn : mns)
-				mn = ~uint8_t{0};
+			uint32_t bit_shift  = x * 8;
+			uint8_t  is_ordered = 1;
+			uint8_t  last_key   = 0;
 
-			for (uint8_t& ok : keys_ordered)
-				ok = true;
-
-			for (It it = start; it != end; ++it) {
-				key_type k = retrieve_key<It, ExtractKey, Idx>(it, extract_key);
-				//::std::get<Idx>(extract_key(*it));
-
-				if constexpr (is_bitset<key_type>::value) {
-					mn = k < mn ? k : mn;
-					mx = k > mx ? k : mx;
-
-					for (size_t x = 0; x < sizeof(key_type); x++) {
-						uint8_t key_byte;
-						key_byte = sort::treat_as_unsigned_rshifted(k, x * 8) & 0xff;
-
-						mns[x]          = key_byte < mns[x] ? key_byte : mns[x];
-						mxs[x]          = key_byte > mxs[x] ? key_byte : mxs[x];
-						keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
-						last_key[x]     = key_byte;
-
-						++stack_data[(count_indexs * x) + key_byte];
-					}
-				} else if (::std::is_integral<key_type>::value) {
-					if constexpr (::std::is_signed<key_type>::value) {
-						using unsigned_type = typename ::std::make_unsigned<max_key_type>::type;
-
-						// unsigned_type min_value = 0;
-						// min_value               = ~min_value;
-						// min_value               = min_value >> 1u;
-						// min_value               = ~min_value; //{~((~(unsigned_type{0})) >> 1)};
-						constexpr unsigned_type min_value = minimum_unsigned_value<max_key_type>();
-						//~((~(unsigned_type{0}))>>1u);
-
-						unsigned_type uk = k + min_value;
-						mn               = uk < mn ? uk : mn;
-						mx               = uk > mx ? uk : mx;
-
-						for (size_t x = 0; x < sizeof(key_type); x++) {
-							uint8_t key_byte;
-							key_byte = ((uk >> (x * 8)) & 0xff);
-
-							mns[x]          = key_byte < mns[x] ? key_byte : mns[x];
-							mxs[x]          = key_byte > mxs[x] ? key_byte : mxs[x];
-							keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
-							last_key[x]     = key_byte;
-
-							++stack_data[(count_indexs * x) + key_byte];
-						}
-					} else {
-						mn = k < mn ? k : mn;
-						mx = k > mx ? k : mx;
-						for (size_t x = 0; x < sizeof(key_type); x++) {
-							uint8_t key_byte;
-							key_byte = ((k >> (x * 8)) & 0xff);
-
-							mns[x]          = key_byte < mns[x] ? key_byte : mns[x];
-							mxs[x]          = key_byte > mxs[x] ? key_byte : mxs[x];
-							keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
-							last_key[x]     = key_byte;
-
-							++stack_data[(count_indexs * x) + key_byte];
-						}
-					}
-				} else if constexpr (::std::is_floating_point<key_type>::value) {
-					max_key_type uk = sort::treat_as_unsigned(k);
-					mn              = uk < mn ? uk : mn;
-					mx              = uk > mx ? uk : mx;
-
-					for (size_t x = 0; x < sizeof(key_type); x++) {
-						uint8_t key_byte;
-						key_byte = sort::treat_as_unsigned_rshifted(k, x * 8) & 0xff;
-
-						mns[x]          = key_byte < mns[x] ? key_byte : mns[x];
-						mxs[x]          = key_byte > mxs[x] ? key_byte : mxs[x];
-						keys_ordered[x] = keys_ordered[x] & (uint8_t)(last_key[x] <= key_byte);
-						last_key[x]     = key_byte;
-
-						++stack_data[(count_indexs * x) + key_byte];
-					}
-				}
+			for (size_t i = 0; i < 257; i++) {
+				stack_data[i] = 0;
+				// counts[i] = 0;
 			}
 
-			// array of all the same values
-			if constexpr (!std::is_floating_point<key_type>::value && !is_bitset<key_type>::value) {
-				max_key_type diff = mx - mn;
-				switch (diff) {
-				case 1: {
-					auto it = sort::partition_branchless(start, end, [&mx](const auto& v) {
-						using namespace sort;
-						return sort::treat_as_unsigned(retrieve_key_value<decltype(v), ExtractKey, Idx>(v, ExtractKey{})
-											   //::std::get<Idx>(ExtractKey{}(v))
-											   ) < mx;
-					});
-					if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
-						if constexpr (sizeof...(Idxs)) {
-							counting_sort_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
-											parameter_list<Deferred...>{});
-							return counting_sort_impl_recursive(it, end, extract_key, std::index_sequence<Idxs...>{},
-											parameter_list<Deferred...>{});
-						} else {
-							using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
-							using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-							counting_sort_impl_recursive(start, it, typename first_deferred::callback{},
-											typename first_deferred::idxs{}, popped_list{});
-							return counting_sort_impl_recursive(it, end, typename first_deferred::callback{},
-											typename first_deferred::idxs{}, popped_list{});
-						}
+			size_t total_items = 0;
+			for (It it = start; it != end; ++it) {
+				key_type k;
+				uint8_t  key_byte;
+				if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
+								::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+					if constexpr (sort::is_tuple<extract_type>::value) {
+						k = std::get<Idx>(*it);
+					} else if constexpr (sort::is_array<extract_type>::value) {
+						k = std::get<Idx>(*it);
 					} else {
-						[[fallthrough]];
+						k = *it;
 					}
-				}
-				case 0:
-					if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
-						if constexpr (sizeof...(Idxs)) {
-							return counting_sort_impl_recursive(start, end, extract_key, std::index_sequence<Idxs...>{},
-											parameter_list<Deferred...>{});
-						} else {
-							using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
-							using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-							return counting_sort_impl_recursive(start, end, typename first_deferred::callback{},
-											typename first_deferred::idxs{}, popped_list{});
-						}
-						// return counting_sort_get_impl(start, end, extract_key, std::index_sequence<Idxs...>{});
+				} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+									 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+					if constexpr (sort::is_tuple<extract_type>::value) {
+						k = std::get<Idx>(*it);
+					} else if constexpr (sort::is_array<extract_type>::value) {
+						k = std::get<Idx>(*it);
 					} else {
-						return;
-					}
-				default:
-					break;
-				}
-			} else if constexpr (std::is_floating_point<key_type>::value) {
-				auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
-				switch (diff) {
-				case 1: {
-					auto it = sort::partition_branchless(start, end, [&mx](const auto& v) {
-						using namespace sort;
-						return sort::treat_as_unsigned(
-											   sort::retrieve_key_value<decltype(v), ExtractKey, Idx>(v, ExtractKey{})
-											   //::std::get<Idx>(ExtractKey{}(v))
-											   ) < mx;
-					});
-					if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
-						if constexpr (sizeof...(Idxs)) {
-							counting_sort_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
-											parameter_list<Deferred...>{});
-							return counting_sort_impl_recursive(it, end, extract_key, std::index_sequence<Idxs...>{},
-											parameter_list<Deferred...>{});
-						} else {
-							using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
-							using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-							counting_sort_impl_recursive(start, it, typename first_deferred::callback{},
-											typename first_deferred::idxs{}, popped_list{});
-							return counting_sort_impl_recursive(it, end, typename first_deferred::callback{},
-											typename first_deferred::idxs{}, popped_list{});
-						}
-					} else {
-						[[fallthrough]];
-					}
-				}
-				case 0:
-					if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
-						if constexpr (sizeof...(Idxs)) {
-							return counting_sort_impl_recursive(start, end, extract_key, std::index_sequence<Idxs...>{},
-											parameter_list<Deferred...>{});
-						} else {
-							using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
-							using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-							return counting_sort_impl_recursive(start, end, typename first_deferred::callback{},
-											typename first_deferred::idxs{}, popped_list{});
-						}
-						// return counting_sort_get_impl(start, end, extract_key, std::index_sequence<Idxs...>{});
-					} else {
-						return;
-					}
-				default:
-					break;
-				}
-			} else if constexpr (is_bitset<key_type>::value) {
-				if constexpr (bitset_size(key_type()) > 64) {
-					key_type xor_diff  = (mx ^ mn);
-					size_t   xor_count = xor_diff.count();
-					size_t   mx_count  = mx.count();
-					size_t   mn_count  = mn.count();
-					if (xor_diff[0] && (mx_count == 1 || mn_count == 1) && (mx_count + mn_count == xor_count)) {
-						bool all_strictly_ones = true;
-						// we're looking for patterns of partitioned 1s and 0s
-						{
-							uint32_t i = 1;
-							for (; i < xor_diff.size();) {
-								bool strictly_ones = xor_diff[i];
-								i += 1;
-								if (!strictly_ones)
-									break;
-							}
-							bool strictly_ones = false;
-							for (; i < xor_diff.size();) {
-								strictly_ones = xor_diff[i];
-								i += 1;
-								if (strictly_ones)
-									break;
-							}
-							all_strictly_ones = all_strictly_ones && strictly_ones;
-						}
-						{
-							uint32_t i = 0;
-							for (; i < mn.size();) {
-								bool strictly_ones = mn[i];
-								i += 1;
-								if (!strictly_ones)
-									break;
-							}
-							bool strictly_ones = false;
-							for (; i < mn.size();) {
-								strictly_ones = mn[i];
-								i += 1;
-								if (strictly_ones)
-									break;
-							}
-							all_strictly_ones = all_strictly_ones && strictly_ones;
-						}
-						{
-							uint32_t i = 0;
-							for (; i < mx.size();) {
-								bool strictly_ones = mx[i];
-								i += 1;
-								if (!strictly_ones)
-									break;
-							}
-							bool strictly_ones = false;
-							for (; i < mx.size();) {
-								strictly_ones = mx[i];
-								i += 1;
-								if (strictly_ones)
-									break;
-							}
-							all_strictly_ones = all_strictly_ones && strictly_ones;
-						}
-
-						if (!all_strictly_ones) {
-							auto it = sort::partition_branchless(start, end, [&mn](const auto& v) {
-								return sort::treat_as_unsigned(sort::retrieve_key_value<decltype(v), ExtractKey, Idx>(
-													   v, ExtractKey{})
-													   //::std::get<Idx>(ExtractKey{}(v))
-													   ) == mn;
-							});
-
-							if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
-								if constexpr (sizeof...(Idxs)) {
-									counting_sort_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
-													parameter_list<Deferred...>{});
-									return counting_sort_impl_recursive(it, end, extract_key,
-													std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
-								} else {
-									using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
-									using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-									counting_sort_impl_recursive(start, it, typename first_deferred::callback{},
-													typename first_deferred::idxs{}, popped_list{});
-									return counting_sort_impl_recursive(it, end, typename first_deferred::callback{},
-													typename first_deferred::idxs{}, popped_list{});
-								}
-							} else {
-								return;
-							}
-						}
-					} else if (xor_count == 0) {
-						if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
-							if constexpr (sizeof...(Idxs)) {
-								return counting_sort_impl_recursive(start, end, extract_key,
-												std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
-							} else {
-								using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
-								using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-								return counting_sort_impl_recursive(start, end, typename first_deferred::callback{},
-												typename first_deferred::idxs{}, popped_list{});
-							}
-						} else {
-							return;
-						}
+						k = *it;
 					}
 				} else {
-					auto diff = sort::treat_as_unsigned(mx) - sort::treat_as_unsigned(mn);
-					switch (diff) {
-					case 1: {
-						auto it = sort::partition_branchless(start, end, [&mx](const auto& v) {
-							return sort::treat_as_unsigned(
-												   retrieve_key_value<decltype(v), ExtractKey, Idx>(v, ExtractKey{})
-												   //::std::get<Idx>(ExtractKey{}(v))
-												   ) < mx;
-						});
-						if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
-							if constexpr (sizeof...(Idxs)) {
-								counting_sort_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
-												parameter_list<Deferred...>{});
-								return counting_sort_impl_recursive(it, end, extract_key,
-												std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
-							} else {
-								using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
-								using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-								counting_sort_impl_recursive(start, it, typename first_deferred::callback{},
-												typename first_deferred::idxs{}, popped_list{});
-								return counting_sort_impl_recursive(it, end, typename first_deferred::callback{},
-												typename first_deferred::idxs{}, popped_list{});
-							}
-						} else {
-							[[fallthrough]];
-						}
-					}
-					case 0:
-						if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
-							if constexpr (sizeof...(Idxs)) {
-								return counting_sort_impl_recursive(start, end, extract_key,
-												std::index_sequence<Idxs...>{}, parameter_list<Deferred...>{});
-							} else {
-								using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
-								using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
-								return counting_sort_impl_recursive(start, end, typename first_deferred::callback{},
-												typename first_deferred::idxs{}, popped_list{});
-							}
-							// return counting_sort_get_impl(start, end, extract_key, std::index_sequence<Idxs...>{});
-						} else {
-							return;
-						}
-					default:
-						break;
+					if constexpr (sort::is_tuple<extract_type>::value) {
+						k = std::get<Idx>(extract_key(*it));
+					} else if constexpr (sort::is_array<extract_type>::value) {
+						k = std::get<Idx>(extract_key(*it));
+					} else {
+						k = extract_key(*it);
 					}
 				}
+
+				if constexpr (::std::is_integral<key_type>::value) {
+					if constexpr (::std::is_signed<key_type>::value) {
+						using unsigned_type               = typename ::std::make_unsigned<max_key_type>::type;
+						constexpr unsigned_type min_value = sort::minimum_unsigned_value<max_key_type>();
+
+						unsigned_type uk = k + min_value;
+						key_byte         = uk >> bit_shift;
+					} else {
+						key_byte = k >> bit_shift;
+					}
+				} else { //(::std::is_floating_point<key_type>::value)
+					key_byte = sort::treat_as_unsigned_rshifted(k, bit_shift);
+				}
+				// reverse the sort direction by inverting the key
+				if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+								::std::is_same<identity_greater_than<key_type>, ExtractKey>::value ||
+								sort::is_wrapped_greater_than<ExtractKey>::value) {
+					key_byte = ~key_byte;
+				}
+				// counts[key_byte] = total_items;
+				is_ordered &= (uint8_t)(key_byte >= last_key);
+				last_key = key_byte;
+
+				++total_items;
+				++stack_data[key_byte];
 			}
 
-			counting_sort_bytes next{};
-			uint8_t             depth = 0;
-			// find the first byte that we can sort off of
-			/// uint32_t bytes_needing_sorting = 0;
-			for (uint32_t x = sizeof(key_type); --x < sizeof(key_type);) {
-				bool bit_range = mns[x] != mxs[x];
-				next.idxs |= (x << (8 * next.bytes)) * bit_range;
-				next.bytes += bit_range;
-			}
-
-			its[0]              = start;
-			uint32_t partitions = 0;
 			{ // convert counts to prefix sum
-				recursion_count[0]    = 0;
 				size_t   idx          = 0;
 				size_t   total        = 0;
-				uint16_t current_byte = (next.idxs >> (depth * 8)) & 0xff;
+				size_t   prev_idx     = 0;
+				uint16_t current_byte = (remaining.idxs >> (remaining.byte_idx << 3)) & 0xff;
+
+				// NOTE: optimize this furthur
 				for (; idx < 256;) {
-					size_t count = stack_data[(current_byte * count_indexs) + idx];
+					size_t count[4];
 
-					idxs[recursion_count[0]]    = idx;
-					idxs[255 - fallback1_count] = idx;
+					size_t tidx  = idx;
+					size_t tidx1 = idx + 1;
+					size_t tidx2 = idx + 2;
+					size_t tidx3 = idx + 3;
+					idx += 4;
 
-					recursion_count[0] += count > 128;
+					count[0] = stack_data[tidx];
+					count[1] = stack_data[tidx1];
+					count[2] = stack_data[tidx2];
+					count[3] = stack_data[tidx3];
+
+					idxs[recursion_count] = tidx;
+
+					idxs[255 - fallback1_count] = tidx;
 					if constexpr (can_small_sort) {
-						fallback1_count += count > 1 && count <= 128;
+						recursion_count += count[0] > small_merge_sort_threshold;
+						fallback1_count += count[0] > 1 && count[0] <= small_merge_sort_threshold;
 					} else {
-						fallback1_count += count > 32 && count <= 128;
+						recursion_count += count[0] > intro_sort_threshold;
+						fallback1_count += count[0] > insertion_sort_threshold && count[0] <= intro_sort_threshold;
 					}
 
-					partitions += count > 0;
-					counts[idx]     = total;
-					stack_data[idx] = total;
-					total += count;
-					idx++;
+					counts[tidx]     = total;
+					stack_data[tidx] = total;
+					total += count[0];
+
+					idxs[recursion_count] = tidx1;
+					idxs[255 - fallback1_count] = tidx1;
+					if constexpr (can_small_sort) {
+						recursion_count += count[1] > small_merge_sort_threshold;
+						fallback1_count += count[1] > 1 && count[1] <= small_merge_sort_threshold;
+					} else {
+						recursion_count += count[1] > intro_sort_threshold;
+						fallback1_count += count[1] > insertion_sort_threshold && count[1] <= intro_sort_threshold;
+					}
+
+					counts[tidx1]     = total;
+					stack_data[tidx1] = total;
+					total += count[1];
+
+					idxs[recursion_count] = tidx2;
+					idxs[255 - fallback1_count] = tidx2;
+					if constexpr (can_small_sort) {
+						recursion_count += count[2] > small_merge_sort_threshold;
+						fallback1_count += count[2] > 1 && count[2] <= small_merge_sort_threshold;
+					} else {
+						recursion_count += count[2] > intro_sort_threshold;
+						fallback1_count += count[2] > insertion_sort_threshold && count[2] <= intro_sort_threshold;
+					}
+
+					counts[tidx2]     = total;
+					stack_data[tidx2] = total;
+					total += count[2];
+
+					idxs[recursion_count] = tidx3;
+					idxs[255 - fallback1_count] = tidx3;
+					if constexpr (can_small_sort) {
+						recursion_count += count[3] > small_merge_sort_threshold;
+						fallback1_count += count[3] > 1 && count[3] <= small_merge_sort_threshold;
+					} else {
+						recursion_count += count[3] > intro_sort_threshold;
+						fallback1_count += count[3] > insertion_sort_threshold && count[3] <= intro_sort_threshold;
+					}
+
+					counts[tidx3]     = total;
+					stack_data[tidx3] = total;
+					total += count[3];
 				}
 
 				stack_data[256] = total;
@@ -2353,68 +1271,19 @@ namespace sort {
 					for (idx = 0; idx < 256; idx++) {
 						size_t count                                    = stack_data[idx + 1] - stack_data[idx];
 						idxs[255 - (fallback1_count + fallback0_count)] = idx;
-						fallback0_count += count > 1 && count <= 32;
+						fallback0_count += count > 1 && count <= insertion_sort_threshold;
 					}
 				}
 			}
 
-			switch (partitions) {
-			case 2: {
-				auto it = sort::partition_branchless(start, end, [&mn](const auto& v) {
-					return sort::treat_as_unsigned(
-										   sort::retrieve_key_value<decltype(v), ExtractKey, Idx>(v, ExtractKey{})
-										   //	::std::get<Idx>(ExtractKey{}(v))
-										   ) == mn;
-				});
-				if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
-					if constexpr (sizeof...(Idxs)) {
-						counting_sort_impl_recursive(start, it, extract_key, std::index_sequence<Idxs...>{},
-										parameter_list<Deferred...>{});
-						return counting_sort_impl_recursive(it, end, extract_key, std::index_sequence<Idxs...>{},
-										parameter_list<Deferred...>{});
-					} else {
-						using popped_list    = decltype(pop_front(parameter_list<Deferred...>{}));
-						using first_deferred = decltype(front(parameter_list<Deferred...>{}));
-						counting_sort_impl_recursive(start, it, typename first_deferred::callback{},
-										typename first_deferred::idxs{}, popped_list{});
-						return counting_sort_impl_recursive(it, end, typename first_deferred::callback{},
-										typename first_deferred::idxs{}, popped_list{});
-					}
-				} else {
-					[[fallthrough]];
-				}
-			}
-			case 1:
-				[[fallthrough]];
-			case 0:
-				if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
-					if constexpr (sizeof...(Idxs)) {
-						counting_sort_impl_recursive(start, end, extract_key, std::index_sequence<Idxs...>{},
-										parameter_list<Deferred...>{});
-					} else {
-						using popped_list    = decltype(pop_front(parameter_list<Deferred...>{}));
-						using first_deferred = decltype(front(parameter_list<Deferred...>{}));
-						counting_sort_impl_recursive(start, end, typename first_deferred::callback{},
-										typename first_deferred::idxs{}, popped_list{});
-					}
-					// return counting_sort_get_impl(start, end, extract_key, std::index_sequence<Idxs...>{});
-					[[fallthrough]];
-				} else {
-					return;
-				}
-			default:
-				break;
-			}
+			auto start_it = start;
 
-			auto start_it = its[depth];
-
-			uint32_t bit_shift = ((next.idxs >> (depth * 8)) & 0xff) * 8;
-			if (!keys_ordered[bit_shift >> 3]) {
+			if (!is_ordered) {
 				size_t sorted_count = 0;
 				do {
 					for (size_t x = 0; x < 256; x++) {
-						size_t s = counts[x];                                      // counts[depth][x];
-						size_t e = stack_data[(depth * start_end_indexs) + x + 1]; // start_end[depth][x + 1];
+						size_t s = counts[x];         // counts[depth][x];
+						size_t e = stack_data[x + 1]; // start_end[depth][x + 1];
 						// this is so when we loop back around we start past the point we
 						// know the data is sorted, skarupke mention's swapping things around
 						// I'm not convinced that's a good idea, plus this is easy to program anyway
@@ -2422,33 +1291,73 @@ namespace sort {
 						for (; s < e; s++) {
 							It swap_left = start_it + s;
 							It swap_target;
-							/*
-							uint8_t key = (sort::treat_as_unsigned(
-														   sort::retrieve_key<decltype(swap_left), ExtractKey, Idx>(
-																		   swap_left, extract_key)) >>
-														  bit_shift) &
-										  0xff;*/
-							uint8_t key = sort::treat_as_unsigned_rshifted(
-											sort::retrieve_key<decltype(swap_left), ExtractKey, Idx>(
-															swap_left, extract_key),
-											bit_shift);
 
+							key_type k;
+							uint8_t  key_byte;
+							if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
+											::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+								if constexpr (sort::is_tuple<extract_type>::value) {
+									k = std::get<Idx>(*swap_left);
+								} else if constexpr (sort::is_array<extract_type>::value) {
+									k = std::get<Idx>(*swap_left);
+								} else {
+									k = *swap_left;
+								}
+							} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+												 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+								if constexpr (sort::is_tuple<extract_type>::value) {
+									k = std::get<Idx>(*swap_left);
+								} else if constexpr (sort::is_array<extract_type>::value) {
+									k = std::get<Idx>(*swap_left);
+								} else {
+									k = *swap_left;
+								}
+							} else {
+								if constexpr (sort::is_tuple<extract_type>::value) {
+									k = std::get<Idx>(extract_key(*swap_left));
+								} else if constexpr (sort::is_array<extract_type>::value) {
+									k = std::get<Idx>(extract_key(*swap_left));
+								} else {
+									k = extract_key(*swap_left);
+								}
+							}
+
+							if constexpr (::std::is_integral<key_type>::value) {
+								if constexpr (::std::is_signed<key_type>::value) {
+									using unsigned_type = typename ::std::make_unsigned<max_key_type>::type;
+									constexpr unsigned_type min_value = sort::minimum_unsigned_value<max_key_type>();
+
+									unsigned_type uk = k + min_value;
+									key_byte         = uk >> bit_shift;
+								} else {
+									key_byte = k >> bit_shift;
+								}
+							} else {
+								key_byte = sort::treat_as_unsigned_rshifted(k, bit_shift);
+							}
+
+							// reverse the sort direction by inverting the key
+							if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+											::std::is_same<identity_greater_than<key_type>, ExtractKey>::value ||
+											sort::is_wrapped_greater_than<ExtractKey>::value) {
+								key_byte = ~key_byte;
+							}
 							//(sort::treat_as_unsigned(::std::get<Idx>(extract_key(*swap_left))) >>
 							// bit_shift) & 0xff;
-							size_t target_idx = counts[key];
+							size_t target_idx = counts[key_byte];
 							swap_target       = start_it + target_idx;
 
 							sort::swap_branchless_unconditional(*swap_left, *swap_target);
-							counts[key] += 1;
+							counts[key_byte] += 1;
 						}
 					}
-				} while (sorted_count < stack_data[(depth * start_end_indexs) + 256]);
+				} while (sorted_count < stack_data[256]);
 			}
 			// no recursion needed, every item had a dedicated location
-			if (partitions == (end - start))
-				return;
+			// if (partitions == total_items)
+			// 	return;
 			if constexpr ((sizeof...(Idxs)) == 0 && (sizeof...(Deferred) == 0)) {
-				if (next.bytes <= 1) // we have other parts of the key to extract
+				if (remaining.bytes <= 1) // we have other parts of the key to extract
 					return;
 			}
 
@@ -2457,10 +1366,12 @@ namespace sort {
 					uint8_t i            = idxs[255 - p];
 					size_t  start_offset = stack_data[i];
 					size_t  end_offset   = stack_data[i + 1];
-					sort::small_merge_sort(start_it + start_offset, start_it + end_offset,
+					sort::small_merge_sort_size(
+									start_it + start_offset, start_it + end_offset,
 									[](const auto& lhs, const auto& rhs) {
 										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-									});
+									},
+									end_offset - start_offset);
 				}
 			} else {
 				for (uint16_t p = 0; p < fallback0_count; p++) {
@@ -2488,226 +1399,76 @@ namespace sort {
 				}
 			}
 
-			for (;;) {
-				uint16_t progress_idx;
-				for (; (progress_idx = progress[depth]) < recursion_count[depth]; ++progress[depth]) {
-					uint8_t next_i = idxs[(depth * 256) + progress_idx];
+			if (remaining.processed < 8) {
+				if constexpr (sizeof...(Idxs) || sizeof...(Deferred)) {
+					if ((remaining.byte_idx + 1) >= remaining.bytes) {
+						remaining.bytes    = 0;
+						remaining.byte_idx = 0;
+						for (uint16_t p = 0; p < recursion_count; p++) {
+							uint8_t next_i = idxs[p];
 
-					size_t start_offset = stack_data[(depth * start_end_indexs) + next_i];
-					size_t end_offset   = stack_data[(depth * start_end_indexs) + next_i + 1];
-					size_t items        = end_offset - start_offset;
+							size_t start_offset = stack_data[next_i];
+							size_t end_offset   = stack_data[next_i + 1];
 
-					uint16_t next_depth = depth + 1;
-					if constexpr (sizeof...(Idxs) || sizeof...(Deferred)) {
-						if (next_depth >= next.bytes) {
 							// go one key deeper
 							if constexpr (sizeof...(Idxs)) {
-								counting_sort_impl_recursive(start_it + start_offset, start_it + end_offset,
+								sort::counting_sort_recursive(start_it + start_offset, start_it + end_offset,
 												extract_key, std::index_sequence<Idxs...>{},
-												parameter_list<Deferred...>{});
+												parameter_list<Deferred...>{}, remaining);
 							} else {
-								using popped_list    = decltype(pop_front(parameter_list<Deferred...>{}));
-								using first_deferred = decltype(front(parameter_list<Deferred...>{}));
-								counting_sort_impl_recursive(start_it + start_offset, start_it + end_offset,
+								using popped_list    = decltype(sort::pop_front(parameter_list<Deferred...>{}));
+								using first_deferred = decltype(sort::front(parameter_list<Deferred...>{}));
+								sort::counting_sort_recursive(start_it + start_offset, start_it + end_offset,
 												typename first_deferred::callback{}, typename first_deferred::idxs{},
-												popped_list{});
+												popped_list{}, remaining);
 							}
-							continue;
-						}
-					}
-
-					mn = ~key_type{0};
-					mx = key_type{0};
-					// do normal count
-
-					// could index using next_depth, or anything,
-					// we don't need to "remember" for long
-					last_key[0]     = 0;
-					keys_ordered[0] = true;
-
-					It end_it = start_it + end_offset;
-					// setup to process the next depth
-					for (size_t& count : counts)
-						count = 0;
-
-					uint32_t bit_shift = ((next.idxs >> (next_depth * 8)) & 0xff) * 8;
-					for (It it = start_it + start_offset; it != end_it; ++it) {
-						key_type k = sort::retrieve_key<decltype(it), ExtractKey, Idx>(it, extract_key);
-						//::std::get<Idx>(extract_key(*it));
-						uint8_t key_byte;
-
-						if constexpr (is_bitset<key_type>::value) {
-							mn       = k < mn ? k : mn;
-							mx       = k > mx ? k : mx;
-							key_byte = sort::treat_as_unsigned_rshifted(k, bit_shift) & 0xff;
-						} else if (::std::is_integral<key_type>::value) {
-							if constexpr (::std::is_signed<key_type>::value) {
-								using unsigned_type               = typename ::std::make_unsigned<max_key_type>::type;
-								constexpr unsigned_type min_value = minimum_unsigned_value<max_key_type>();
-								unsigned_type           uk        = k + min_value;
-
-								mn       = uk < mn ? uk : mn;
-								mx       = uk > mx ? uk : mx;
-								key_byte = uk >> bit_shift;
-							} else {
-								mn       = k < mn ? k : mn;
-								mx       = k > mx ? k : mx;
-								key_byte = k >> bit_shift;
-							}
-						} else if constexpr (::std::is_floating_point<key_type>::value) {
-							max_key_type uk = sort::treat_as_unsigned(k);
-							mn              = uk < mn ? uk : mn;
-							mx              = uk > mx ? uk : mx;
-							key_byte        = uk >> bit_shift;
-						}
-
-						keys_ordered[0] = keys_ordered[0] & (uint8_t)(last_key[0] <= key_byte);
-						last_key[0]     = key_byte;
-						++counts[key_byte];
-					}
-
-					fallback0_count = 0;
-					fallback1_count = 0;
-
-					uint32_t partitions = 0;
-					{ // convert counts to prefix sum
-						recursion_count[next_depth] = 0;
-
-						size_t idx   = 0;
-						size_t total = 0;
-						for (size_t& count : counts) {
-							size_t old_count = count;
-
-							idxs[(next_depth * 256) + recursion_count[next_depth]] = idx;
-							idxs[(next_depth * 256) + 255 - fallback1_count]       = idx;
-
-							recursion_count[next_depth] += count > 128;
-							if constexpr (can_small_sort) {
-								fallback1_count += count > 1 && count <= 128;
-							} else {
-								fallback1_count += count > 32 && count <= 128;
-							}
-
-							partitions += old_count > 0;
-							count                                             = total;
-							stack_data[(next_depth * start_end_indexs) + idx] = total;
-							// start_end[next_depth][idx] = total;
-							total += old_count;
-							idx++;
-						}
-						stack_data[(next_depth * start_end_indexs) + 256] = total;
-
-						if constexpr (!can_small_sort) {
-							for (idx = 0; idx < 256; idx++) {
-								size_t count = stack_data[(next_depth * start_end_indexs) + idx + 1] -
-											   stack_data[(next_depth * start_end_indexs) + idx];
-
-								idxs[(next_depth * 256) + 255 - (fallback1_count + fallback0_count)] = idx;
-								fallback0_count += count > 1 && count <= 32;
-							}
-						}
-					}
-
-					its[next_depth] = start_it + start_offset;
-
-					size_t sorted_count = 0;
-					if (!keys_ordered[0]) {
-						auto next_start_it = its[next_depth];
-						do {
-							for (size_t x = 0; x < 256; x++) {
-								size_t s = counts[x];
-								size_t e = stack_data[(next_depth * start_end_indexs) + x + 1];
-								// this is so when we loop back around we start past the point we
-								// know the data is sorted, skarupke mention's swapping things around
-								// I'm not convinced that's a good idea, plus this is easy to program anyway
-								sorted_count += (e - s);
-								for (; s < e; s++) {
-									It      swap_left = next_start_it + s;
-									It      swap_target;
-									uint8_t key = (sort::treat_as_unsigned(sort::retrieve_key<decltype(swap_left),
-																   ExtractKey, Idx>(swap_left, extract_key)
-																   //::std::get<Idx>(extract_key(*swap_left))
-																   ) >>
-																  bit_shift) &
-												  0xff;
-									size_t target_idx = counts[key];
-									swap_target       = next_start_it + target_idx;
-
-									sort::swap_branchless_unconditional(*swap_left, *swap_target);
-									counts[key] += 1;
-								}
-							}
-						} while (sorted_count < stack_data[(next_depth * start_end_indexs) + 256]); // start_end[256]
-					}
-
-					if constexpr (can_small_sort) {
-						auto next_start_it = its[next_depth];
-						for (uint16_t p = 0; p < fallback1_count; p++) {
-							uint8_t i            = idxs[(next_depth * 256) + 255 - p];
-							size_t  start_offset = stack_data[(next_depth * start_end_indexs) + i];
-							size_t  end_offset   = stack_data[(next_depth * start_end_indexs) + i + 1];
-							sort::small_merge_sort(next_start_it + start_offset, next_start_it + end_offset,
-											[](const auto& lhs, const auto& rhs) {
-												return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-											});
 						}
 					} else {
-						auto next_start_it = its[next_depth];
-						for (uint16_t p = 0; p < fallback0_count; p++) {
-							uint8_t i            = idxs[(next_depth * 256) + 255 - (p + fallback1_count)];
-							size_t  start_offset = stack_data[(next_depth * start_end_indexs) + i];
-							size_t  end_offset   = stack_data[(next_depth * start_end_indexs) + i + 1];
-							sort::insertion_sort(next_start_it + start_offset, next_start_it + end_offset,
-											[](const auto& lhs, const auto& rhs) {
-												return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-											});
-						}
+						remaining.byte_idx += 1;
+						for (uint16_t p = 0; p < recursion_count; p++) {
+							uint8_t next_i = idxs[p];
 
-						for (uint16_t p = 0; p < fallback1_count; p++) {
-							uint8_t i            = idxs[(next_depth * 256) + 255 - p];
-							size_t  start_offset = stack_data[(next_depth * start_end_indexs) + i];
-							size_t  end_offset   = stack_data[(next_depth * start_end_indexs) + i + 1];
-							sort::make_heap(next_start_it + start_offset, next_start_it + end_offset,
-											[](const auto& lhs, const auto& rhs) {
-												return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-											});
-							sort::sort_heap(next_start_it + start_offset, next_start_it + end_offset,
-											[](const auto& lhs, const auto& rhs) {
-												return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-											});
+							size_t start_offset = stack_data[next_i];
+							size_t end_offset   = stack_data[next_i + 1];
+
+							sort::counting_sort_recursive(start_it + start_offset, start_it + end_offset, extract_key,
+											std::index_sequence<Idx, Idxs...>{}, parameter_list<Deferred...>{},
+											remaining);
 						}
 					}
+				} else {
+					if (remaining.byte_idx >= remaining.bytes) {
+					} else {
+						remaining.byte_idx += 1;
+						for (uint16_t p = 0; p < recursion_count; p++) {
+							uint8_t next_i = idxs[p];
 
-					// we don't need to recurse if the # of items matches
-					if constexpr ((sizeof...(Idxs)) == 0 && (sizeof...(Deferred)) == 0) {
-						if (next_depth >= (next.bytes - 1))
-							continue;
+							size_t start_offset = stack_data[next_i];
+							size_t end_offset   = stack_data[next_i + 1];
+
+							sort::counting_sort_recursive(start_it + start_offset, start_it + end_offset, extract_key,
+											std::index_sequence<Idx, Idxs...>{}, parameter_list<Deferred...>{},
+											remaining);
+						}
 					}
-					if (partitions == items)
-						continue;
-
-					if (recursion_count[next_depth] == 0)
-						continue;
-
-					progress[next_depth] = 0;
-					break;
 				}
-
-				if (depth == 0 && progress[0] >= recursion_count[0]) //
-					break;
-				bool deeper = (progress[depth] < recursion_count[depth]);
-				depth += deeper ? 1 : -1;
-				progress[depth] += !deeper;
-				start_it = its[depth];
+			} else {
+				// skarupe mentions a failover / panic mode when the # of bytes processed gets too large
+				for (uint16_t p = 0; p < fallback1_count; p++) {
+					uint8_t i            = idxs[255 - p];
+					size_t  start_offset = stack_data[i];
+					size_t  end_offset   = stack_data[i + 1];
+					sort::make_heap(start_it + start_offset, start_it + end_offset,
+									[](const auto& lhs, const auto& rhs) {
+										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+									});
+					sort::sort_heap(start_it + start_offset, start_it + end_offset,
+									[](const auto& lhs, const auto& rhs) {
+										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+									});
+				}
 			}
 		}
-	}
-
-	template<typename It, typename ExtractKey, size_t Idx, size_t... Idxs>
-	constexpr void counting_sort_get_impl(It start, It end, ExtractKey extract_key, std::index_sequence<Idx, Idxs...>)
-	{
-		return counting_sort_impl_recursive(
-						start, end, extract_key, std::index_sequence<Idx, Idxs...>{}, parameter_list<>{});
 	}
 
 	template<typename> struct is_convertible_to_integrals : std::false_type {};
@@ -2716,17 +1477,6 @@ namespace sort {
 	struct is_convertible_to_integrals<std::tuple<T, Ts...>>
 		: std::bool_constant<(
 						  (is_convertible_to_integrals<Ts>::value) && ... && is_convertible_to_integrals<T>::value)> {};
-
-	template<typename It, typename ExtractKey>
-	constexpr void counting_sort_tuple(It start, It end, ExtractKey extract_key)
-	{
-		using key_type = sort::remove_cvref_t<decltype(ExtractKey{}(*std::declval<It>()))>;
-		static_assert(is_tuple<key_type>::value && is_convertible_to_integrals<key_type>::value,
-						"extract_key must return a tuple type!");
-
-		return sort::counting_sort_impl_recursive(start, end, extract_key,
-						std::make_index_sequence<std::tuple_size<key_type>::value>{}, parameter_list<>{});
-	}
 
 	template<typename... key_types> constexpr size_t partition_count(std::tuple<key_types...>);
 
@@ -2744,9 +1494,9 @@ namespace sort {
 			return partitions * (partitions_0 != 0);
 #if defined __has_include
 #if __has_include(<bitset>)
-		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) > 1) {
+		} else if constexpr (sort::is_bitset<key_type>::value && sort::bitset_size(key_type{}) > 1) {
 			return 0;
-		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) <= 1) {
+		} else if constexpr (sort::is_bitset<key_type>::value && sort::bitset_size(key_type{}) <= 1) {
 			return 2;
 #endif
 #endif
@@ -2890,15 +1640,20 @@ namespace sort {
 		}
 
 		if constexpr (is_tuple<key_type>::value) {
-			sort::counting_sort_impl_recursive(f, l, extract_key,
+			sort::counting_sort_recursive(f, l, extract_key,
 							std::make_index_sequence<std::tuple_size<key_type>::value>{}, parameter_list<>{});
 #if defined __has_include
 #if __has_include(<bitset>)
 		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) > 1) {
 
-			sort::counting_sort_impl_recursive(f, l, extract_key, std::index_sequence<0>{}, parameter_list<>{});
+			sort::counting_sort_recursive(f, l, extract_key, std::index_sequence<0>{}, parameter_list<>{});
 		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) <= 1) {
-			sort::partition_branchless(f, l, [](const auto& value) { return !(ExtractKey{}(value)[0]); });
+			if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+							::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+				sort::partition_branchless(f, l, [](const auto& value) { return (ExtractKey{}(value)[0]); });
+			} else {
+				sort::partition_branchless(f, l, [](const auto& value) { return !(ExtractKey{}(value)[0]); });
+			}
 #endif
 #endif
 		} else if constexpr (::std::is_same<key_type, bool>::value || ::std::is_same<key_type, const bool&>::value) {
@@ -2906,7 +1661,7 @@ namespace sort {
 			// flip the extract function to keep the semantics the same as expected
 			sort::partition_branchless(f, l, [](const auto& value) { return !ExtractKey{}(value); });
 		} else if constexpr (is_array<key_type>::value) {
-			sort::counting_sort_impl_recursive(f, l, extract_key,
+			sort::counting_sort_recursive(f, l, extract_key,
 							sort::make_reversed_index_sequence(
 											std::make_index_sequence<std::tuple_size<key_type>::value>{}),
 							parameter_list<>{});
@@ -2916,33 +1671,33 @@ namespace sort {
 				if constexpr (::std::is_signed<key_type>::value) {
 					using unsigned_type               = typename ::std::make_unsigned<key_type>::type;
 					constexpr unsigned_type min_value = sort::minimum_unsigned_value<key_type>();
-					sort::counting_sort_impl_recursive(
+					sort::counting_sort_recursive(
 									f, l,
 									[](const auto& value) {
 										return (typename ::std::make_unsigned<key_type>::type)value + min_value;
 									},
 									std::index_sequence<0>{}, parameter_list<>{});
 				} else {
-					sort::counting_sort_impl_recursive(f, l, extract_key, std::index_sequence<0>{}, parameter_list<>{});
+					sort::counting_sort_recursive(f, l, extract_key, std::index_sequence<0>{}, parameter_list<>{});
 				}
 			} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
 								 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
 				if constexpr (::std::is_signed<key_type>::value) {
 					using unsigned_type               = typename ::std::make_unsigned<key_type>::type;
 					constexpr unsigned_type min_value = sort::minimum_unsigned_value<key_type>();
-					sort::counting_sort_impl_recursive(
+					sort::counting_sort_recursive(
 									f, l,
 									[](const key_type& value) {
 										return (typename ::std::make_unsigned<key_type>::type) ~(value + min_value);
 									},
 									std::index_sequence<0>{}, parameter_list<>{});
 				} else {
-					sort::counting_sort_impl_recursive(
+					sort::counting_sort_recursive(
 									f, l, [](const key_type& value) { return ~value; }, std::index_sequence<0>{},
 									parameter_list<>{});
 				}
 			} else {
-				sort::counting_sort_impl_recursive(f, l, extract_key, std::index_sequence<0>{}, parameter_list<>{});
+				sort::counting_sort_recursive(f, l, extract_key, std::index_sequence<0>{}, parameter_list<>{});
 			}
 		} else {
 			static_assert(false, "counting sort requires some form of integral or boolean convertible type!");
