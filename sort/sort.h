@@ -922,6 +922,18 @@ namespace sort {
 		}
 	}
 
+	template<typename index_type> struct counting_sort_memory {
+		static constexpr size_t index_size     = sizeof(index_type);
+		static constexpr size_t cacheline_size = std::hardware_constructive_interference_size;
+
+		// The start of one index is the end of another, we can compress the data into
+		// index pairs right next to each other
+		alignas(16) index_type counts[256];
+		// make sure counts[x] and stack_data[x] are not on the same cacheline
+		alignas(16) uint8_t    idxs[256];
+		alignas(16) index_type stack_data[257];
+	};
+
 	template<typename It, typename ExtractKey, size_t Idx, size_t... Idxs, typename... Deferred>
 	constexpr void counting_sort_recursive(It start, It end, ExtractKey extract_key,
 					std::index_sequence<Idx, Idxs...> = {}, sort::parameter_list<Deferred...> = {},
@@ -1096,35 +1108,35 @@ namespace sort {
 			constexpr size_t count_indexs              = 256;
 			constexpr size_t start_end_indexs          = 257;
 
-			// The start of one index is the end of another, we can compress the data into
-			// index pairs right next to each other
-			// std::array<index_type, start_end_indexs> stack_data;
-			// std::array<index_type, count_indexs>     counts; // we can reuse these for each recursion depth
-			// std::array<uint8_t, 256> idxs;
-			alignas(16) index_type counts[count_indexs];
-			alignas(16) index_type stack_data[start_end_indexs];
-			alignas(16) uint8_t    idxs[256];
+			counting_sort_memory<index_type> stack;
 
-			uint16_t fallback0_count = 0;
-			uint16_t fallback1_count = 0;
-			uint16_t recursion_count = 0;
+			uint32_t bit_shift;
+			uint8_t  is_ordered;
+			uint8_t  last_key;
+			uint16_t fallback0_count;
+			uint16_t fallback1_count;
+			uint16_t recursion_count;
 
-			sort::counting_sort_bytes next{};
-			for (uint64_t x = sizeof(key_type); --x < sizeof(key_type);) {
-				next.idxs |= (x << (8 * next.bytes));
-				next.bytes += 1;
+			{
+				sort::counting_sort_bytes next{};
+				for (uint64_t x = sizeof(key_type); --x < sizeof(key_type);) {
+					next.idxs |= (x << (8 * next.bytes));
+					next.bytes += 1;
+				}
+				remaining.idxs  = next.idxs;
+				remaining.bytes = next.bytes;
 			}
-			remaining.idxs  = next.idxs;
-			remaining.bytes = next.bytes;
-
-			uint32_t x = remaining.bytes ? ((remaining.idxs >> (remaining.byte_idx << 3)) & 0xff) : sizeof(key_type) - 1;
-
-			uint32_t bit_shift  = x * 8;
-			uint8_t  is_ordered = 1;
-			uint8_t  last_key   = 0;
+			uint32_t x      = remaining.bytes ? ((remaining.idxs >> (remaining.byte_idx << 3)) & 0xff)
+											  : sizeof(key_type) - 1;
+			bit_shift       = x << 3;
+			fallback0_count = 0;
+			fallback1_count = 0;
+			recursion_count = 0;
+			is_ordered      = 1;
+			last_key        = 0;
 
 			for (size_t i = 0; i < 257; i++) {
-				stack_data[i] = 0;
+				stack.stack_data[i] = 0;
 				// counts[i] = 0;
 			}
 
@@ -1184,7 +1196,7 @@ namespace sort {
 				last_key = key_byte;
 
 				++total_items;
-				++stack_data[key_byte];
+				++stack.stack_data[key_byte];
 			}
 
 			{ // convert counts to prefix sum
@@ -1203,14 +1215,14 @@ namespace sort {
 					size_t tidx3 = idx + 3;
 					idx += 4;
 
-					count[0] = stack_data[tidx];
-					count[1] = stack_data[tidx1];
-					count[2] = stack_data[tidx2];
-					count[3] = stack_data[tidx3];
+					count[0] = stack.stack_data[tidx];
+					count[1] = stack.stack_data[tidx1];
+					count[2] = stack.stack_data[tidx2];
+					count[3] = stack.stack_data[tidx3];
 
-					idxs[recursion_count] = tidx;
+					stack.idxs[recursion_count] = tidx;
 
-					idxs[255 - fallback1_count] = tidx;
+					stack.idxs[255 - fallback1_count] = tidx;
 					if constexpr (can_small_sort) {
 						recursion_count += count[0] > small_merge_sort_threshold;
 						fallback1_count += count[0] > 1 && count[0] <= small_merge_sort_threshold;
@@ -1219,12 +1231,12 @@ namespace sort {
 						fallback1_count += count[0] > insertion_sort_threshold && count[0] <= intro_sort_threshold;
 					}
 
-					counts[tidx]     = total;
-					stack_data[tidx] = total;
+					stack.counts[tidx]     = total;
+					stack.stack_data[tidx] = total;
 					total += count[0];
 
-					idxs[recursion_count] = tidx1;
-					idxs[255 - fallback1_count] = tidx1;
+					stack.idxs[recursion_count]       = tidx1;
+					stack.idxs[255 - fallback1_count] = tidx1;
 					if constexpr (can_small_sort) {
 						recursion_count += count[1] > small_merge_sort_threshold;
 						fallback1_count += count[1] > 1 && count[1] <= small_merge_sort_threshold;
@@ -1233,12 +1245,12 @@ namespace sort {
 						fallback1_count += count[1] > insertion_sort_threshold && count[1] <= intro_sort_threshold;
 					}
 
-					counts[tidx1]     = total;
-					stack_data[tidx1] = total;
+					stack.counts[tidx1]     = total;
+					stack.stack_data[tidx1] = total;
 					total += count[1];
 
-					idxs[recursion_count] = tidx2;
-					idxs[255 - fallback1_count] = tidx2;
+					stack.idxs[recursion_count]       = tidx2;
+					stack.idxs[255 - fallback1_count] = tidx2;
 					if constexpr (can_small_sort) {
 						recursion_count += count[2] > small_merge_sort_threshold;
 						fallback1_count += count[2] > 1 && count[2] <= small_merge_sort_threshold;
@@ -1247,12 +1259,12 @@ namespace sort {
 						fallback1_count += count[2] > insertion_sort_threshold && count[2] <= intro_sort_threshold;
 					}
 
-					counts[tidx2]     = total;
-					stack_data[tidx2] = total;
+					stack.counts[tidx2]     = total;
+					stack.stack_data[tidx2] = total;
 					total += count[2];
 
-					idxs[recursion_count] = tidx3;
-					idxs[255 - fallback1_count] = tidx3;
+					stack.idxs[recursion_count]       = tidx3;
+					stack.idxs[255 - fallback1_count] = tidx3;
 					if constexpr (can_small_sort) {
 						recursion_count += count[3] > small_merge_sort_threshold;
 						fallback1_count += count[3] > 1 && count[3] <= small_merge_sort_threshold;
@@ -1261,16 +1273,16 @@ namespace sort {
 						fallback1_count += count[3] > insertion_sort_threshold && count[3] <= intro_sort_threshold;
 					}
 
-					counts[tidx3]     = total;
-					stack_data[tidx3] = total;
+					stack.counts[tidx3]     = total;
+					stack.stack_data[tidx3] = total;
 					total += count[3];
 				}
 
-				stack_data[256] = total;
+				stack.stack_data[256] = total;
 				if constexpr (!can_small_sort) {
 					for (idx = 0; idx < 256; idx++) {
-						size_t count                                    = stack_data[idx + 1] - stack_data[idx];
-						idxs[255 - (fallback1_count + fallback0_count)] = idx;
+						size_t count = stack.stack_data[idx + 1] - stack.stack_data[idx];
+						stack.idxs[255 - (fallback1_count + fallback0_count)] = idx;
 						fallback0_count += count > 1 && count <= insertion_sort_threshold;
 					}
 				}
@@ -1282,8 +1294,8 @@ namespace sort {
 				size_t sorted_count = 0;
 				do {
 					for (size_t x = 0; x < 256; x++) {
-						size_t s = counts[x];         // counts[depth][x];
-						size_t e = stack_data[x + 1]; // start_end[depth][x + 1];
+						size_t s = stack.counts[x];         // counts[depth][x];
+						size_t e = stack.stack_data[x + 1]; // start_end[depth][x + 1];
 						// this is so when we loop back around we start past the point we
 						// know the data is sorted, skarupke mention's swapping things around
 						// I'm not convinced that's a good idea, plus this is easy to program anyway
@@ -1342,16 +1354,15 @@ namespace sort {
 											sort::is_wrapped_greater_than<ExtractKey>::value) {
 								key_byte = ~key_byte;
 							}
-							//(sort::treat_as_unsigned(::std::get<Idx>(extract_key(*swap_left))) >>
-							// bit_shift) & 0xff;
-							size_t target_idx = counts[key_byte];
+
+							size_t target_idx = stack.counts[key_byte];
 							swap_target       = start_it + target_idx;
 
 							sort::swap_branchless_unconditional(*swap_left, *swap_target);
-							counts[key_byte] += 1;
+							stack.counts[key_byte] += 1;
 						}
 					}
-				} while (sorted_count < stack_data[256]);
+				} while (sorted_count < stack.stack_data[256]);
 			}
 			// no recursion needed, every item had a dedicated location
 			// if (partitions == total_items)
@@ -1363,9 +1374,9 @@ namespace sort {
 
 			if constexpr (can_small_sort) {
 				for (uint16_t p = 0; p < fallback1_count; p++) {
-					uint8_t i            = idxs[255 - p];
-					size_t  start_offset = stack_data[i];
-					size_t  end_offset   = stack_data[i + 1];
+					uint8_t i            = stack.idxs[255 - p];
+					size_t  start_offset = stack.stack_data[i];
+					size_t  end_offset   = stack.stack_data[i + 1];
 					sort::small_merge_sort_size(
 									start_it + start_offset, start_it + end_offset,
 									[](const auto& lhs, const auto& rhs) {
@@ -1375,9 +1386,9 @@ namespace sort {
 				}
 			} else {
 				for (uint16_t p = 0; p < fallback0_count; p++) {
-					uint8_t i            = idxs[255 - (p + fallback1_count)];
-					size_t  start_offset = stack_data[i];
-					size_t  end_offset   = stack_data[i + 1];
+					uint8_t i            = stack.idxs[255 - (p + fallback1_count)];
+					size_t  start_offset = stack.stack_data[i];
+					size_t  end_offset   = stack.stack_data[i + 1];
 					sort::insertion_sort(start_it + start_offset, start_it + end_offset,
 									[](const auto& lhs, const auto& rhs) {
 										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
@@ -1385,9 +1396,9 @@ namespace sort {
 				}
 
 				for (uint16_t p = 0; p < fallback1_count; p++) {
-					uint8_t i            = idxs[255 - p];
-					size_t  start_offset = stack_data[i];
-					size_t  end_offset   = stack_data[i + 1];
+					uint8_t i            = stack.idxs[255 - p];
+					size_t  start_offset = stack.stack_data[i];
+					size_t  end_offset   = stack.stack_data[i + 1];
 					sort::make_heap(start_it + start_offset, start_it + end_offset,
 									[](const auto& lhs, const auto& rhs) {
 										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
@@ -1405,10 +1416,10 @@ namespace sort {
 						remaining.bytes    = 0;
 						remaining.byte_idx = 0;
 						for (uint16_t p = 0; p < recursion_count; p++) {
-							uint8_t next_i = idxs[p];
+							uint8_t next_i = stack.idxs[p];
 
-							size_t start_offset = stack_data[next_i];
-							size_t end_offset   = stack_data[next_i + 1];
+							size_t start_offset = stack.stack_data[next_i];
+							size_t end_offset   = stack.stack_data[next_i + 1];
 
 							// go one key deeper
 							if constexpr (sizeof...(Idxs)) {
@@ -1426,10 +1437,10 @@ namespace sort {
 					} else {
 						remaining.byte_idx += 1;
 						for (uint16_t p = 0; p < recursion_count; p++) {
-							uint8_t next_i = idxs[p];
+							uint8_t next_i = stack.idxs[p];
 
-							size_t start_offset = stack_data[next_i];
-							size_t end_offset   = stack_data[next_i + 1];
+							size_t start_offset = stack.stack_data[next_i];
+							size_t end_offset   = stack.stack_data[next_i + 1];
 
 							sort::counting_sort_recursive(start_it + start_offset, start_it + end_offset, extract_key,
 											std::index_sequence<Idx, Idxs...>{}, parameter_list<Deferred...>{},
@@ -1441,10 +1452,10 @@ namespace sort {
 					} else {
 						remaining.byte_idx += 1;
 						for (uint16_t p = 0; p < recursion_count; p++) {
-							uint8_t next_i = idxs[p];
+							uint8_t next_i = stack.idxs[p];
 
-							size_t start_offset = stack_data[next_i];
-							size_t end_offset   = stack_data[next_i + 1];
+							size_t start_offset = stack.stack_data[next_i];
+							size_t end_offset   = stack.stack_data[next_i + 1];
 
 							sort::counting_sort_recursive(start_it + start_offset, start_it + end_offset, extract_key,
 											std::index_sequence<Idx, Idxs...>{}, parameter_list<Deferred...>{},
@@ -1454,10 +1465,10 @@ namespace sort {
 				}
 			} else {
 				// skarupe mentions a failover / panic mode when the # of bytes processed gets too large
-				for (uint16_t p = 0; p < fallback1_count; p++) {
-					uint8_t i            = idxs[255 - p];
-					size_t  start_offset = stack_data[i];
-					size_t  end_offset   = stack_data[i + 1];
+				for (uint16_t p = 0; p < recursion_count; p++) {
+					uint8_t i            = stack.idxs[p];
+					size_t  start_offset = stack.stack_data[i];
+					size_t  end_offset   = stack.stack_data[i + 1];
 					sort::make_heap(start_it + start_offset, start_it + end_offset,
 									[](const auto& lhs, const auto& rhs) {
 										return ExtractKey{}(lhs) < ExtractKey{}(rhs);
