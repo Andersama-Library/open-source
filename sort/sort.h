@@ -1280,10 +1280,13 @@ namespace sort {
 
 				stack.stack_data[256] = total;
 				if constexpr (!can_small_sort) {
-					for (idx = 0; idx < 256; idx++) {
+					size_t remaining = 256 - (fallback1_count + recursion_count);
+					for (idx = 0; idx < 256 && remaining; idx++) {
 						size_t count = stack.stack_data[idx + 1] - stack.stack_data[idx];
 						stack.idxs[255 - (fallback1_count + fallback0_count)] = idx;
-						fallback0_count += count > 1 && count <= insertion_sort_threshold;
+						uint8_t within_fallback0_range = count > 1 && count <= insertion_sort_threshold;
+						fallback0_count += within_fallback0_range;
+						remaining -= within_fallback0_range;
 					}
 				}
 			}
