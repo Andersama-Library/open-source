@@ -96,14 +96,6 @@ SOFTWARE.
 #endif
 
 namespace sort {
-	template<typename It, typename Comp> struct comparator_info {
-		using comparator_value_type = decltype(*std::declval<It>());
-		static constexpr bool is_comparator =
-						::std::is_invocable<Comp, comparator_value_type, comparator_value_type>::value;
-		static constexpr bool is_keyed     = ::std::is_invocable<Comp, comparator_value_type>::value;
-		static constexpr bool is_partition = ::std::is_invocable<bool, Comp, comparator_value_type>::value;
-	};
-
 	template<class T> using remove_cvref_t = typename std::remove_cv_t<std::remove_reference_t<T>>;
 #if defined(cplusplus_version_20)
 	template<class T> using iter_difference_t = ::std::iter_difference_t<T>;
@@ -114,6 +106,30 @@ namespace sort {
 
 	template<class T> using iter_value_t = typename std::iterator_traits<sort::remove_cvref_t<T>>::value_type;
 #endif
+	template<typename It, typename Comp, bool is_comparator>
+	constexpr auto comparator_callback_type() {
+		using comparator_value_type = sort::remove_cvref_t<decltype(*std::declval<It>())>;
+		// using if constexpr to prevent the evaluation of std::invoke_result_t with types that don't work
+		if constexpr (is_comparator) {
+			return std::invoke_result_t<Comp, comparator_value_type, comparator_value_type>{};		
+		} else {
+			return std::invoke_result_t<Comp, comparator_value_type>{};
+		}
+	}
+
+	template<typename It, typename Comp> struct comparator_info {
+		using comparator_value_type = sort::remove_cvref_t<decltype(*std::declval<It>())>;
+
+		static constexpr bool is_comparator =
+						::std::is_invocable<Comp, comparator_value_type, comparator_value_type>::value;
+		static constexpr bool is_keyed = ::std::is_invocable<Comp, comparator_value_type>::value;
+		static_assert(is_comparator || is_keyed, "The provided callback requires one or two arguments");
+
+		using result_type = decltype(sort::comparator_callback_type<It,Comp,is_comparator>());
+
+		static constexpr bool is_boolean_comparator = is_comparator && std::is_same<comparator_value_type,bool>::value;
+		static constexpr bool is_partition = is_keyed && std::is_same<result_type, bool>::value;
+	};
 
 	constexpr size_t insertion_sort_threshold   = 32;
 	constexpr size_t intro_sort_threshold       = 128;
