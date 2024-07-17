@@ -680,7 +680,7 @@ namespace sort {
 	template<typename It, typename Compare = std::less<>>
 	always_force_inline constexpr void small_merge_sort(It start, It end, Compare comp = Compare{})
 	{
-		return small_merge_sort_size(start, end, comp, end - start);
+		return sort::small_merge_sort_size(start, end, comp, end - start);
 	}
 
 	template<class ForwardIt, class UnaryPred>
