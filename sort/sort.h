@@ -769,11 +769,6 @@ namespace sort {
 	template<typename T> always_force_inline constexpr auto minimum_unsigned_value()
 	{
 		using unsigned_type = typename ::std::make_unsigned<T>::type;
-		// unsigned_type min_value = 0;
-		// min_value               = ~min_value;
-		// min_value               = min_value >> 1u;
-		// min_value               = ~min_value; //{~((~(unsigned_type{0})) >> 1)};
-		//  unsigned_type min_value = ~((~(unsigned_type{0})) >> 1u);
 		return ~((~(unsigned_type{0})) >> 1u); // make sure to use LOGICAL shift vs ARTHEMETIC
 	}
 
@@ -1552,8 +1547,6 @@ namespace sort {
 
 					key_type k;
 					key_type k1;
-					// uint8_t  key_byte;
-					// uint8_t  key_byte1;
 
 					if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
 									::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
@@ -1591,33 +1584,14 @@ namespace sort {
 							k1 = extract_key(*second_it);
 						}
 					}
-					/*
-					if constexpr (::std::is_integral<key_type>::value) {
-						if constexpr (::std::is_signed<key_type>::value) {
-							using unsigned_type               = typename ::std::make_unsigned<max_key_type>::type;
-							constexpr unsigned_type min_value = sort::minimum_unsigned_value<max_key_type>();
 
-							unsigned_type uk  = k + min_value;
-							unsigned_type uk1 = k1 + min_value;
-							key_byte          = uk >> bit_shift;
-							key_byte1         = uk1 >> bit_shift;
-						} else {
-							key_byte  = k >> bit_shift;
-							key_byte1 = k1 >> bit_shift;
-						}
-					} else {
-						key_byte  = sort::treat_as_unsigned_rshifted(k, bit_shift);
-						key_byte1 = sort::treat_as_unsigned_rshifted(k1, bit_shift);
-					}
-					// reverse the sort direction by inverting the key
 					if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
 									::std::is_same<identity_greater_than<key_type>, ExtractKey>::value ||
 									sort::is_wrapped_greater_than<ExtractKey>::value) {
-						key_byte = ~key_byte;
-						key_byte1 = ~key_byte1;
+						sort::iter_swap_conditional(first_it, second_it, k1 > k); //k > k1
+					} else {
+						sort::iter_swap_conditional(first_it, second_it, k < k1); //k1 > k
 					}
-					*/
-					sort::iter_swap_conditional(first_it, second_it, k1 > k);
 				}
 
 				if constexpr (sizeof...(Idxs) || sizeof...(Deferred)) {
@@ -2040,9 +2014,9 @@ namespace sort {
 		using T = sort::iter_value_t<It>;
 		auto i  = first;
 		if constexpr (is_std_less<Compare>::value) {
-			return insertion_sort(first, last, sort::less<>{});
+			return sort::insertion_sort(first, last, sort::less<>{});
 		} else if constexpr (is_std_greater<Compare>::value) {
-			return insertion_sort(first, last, sort::greater<>{});
+			return sort::insertion_sort(first, last, sort::greater<>{});
 		} else {
 			using namespace sort;
 			if constexpr ((std::is_arithmetic<T>::value || std::is_same<T, bool>::value) &&
@@ -2187,7 +2161,7 @@ namespace sort {
 			hole            = bottom - 1;
 		}
 
-		push_heap_by_index(first, hole, top, std::forward<T>(val), comp);
+		sort::push_heap_by_index(first, hole, top, std::forward<T>(val), comp);
 	}
 
 	template<typename It, typename Comp> constexpr void make_heap(It start, It end, Comp comp)
@@ -2506,7 +2480,7 @@ namespace sort {
 			} else {
 				static_assert(false, "WARNING! The behavior of this fallback does not match that of sort::sort! Remove "
 									 "at your own discretion!");
-				sort::intro_sort(get_unwrapped(start), get_unwrapped(end), comp, end - start);
+				sort::intro_sort(sort::get_unwrapped(start), sort::get_unwrapped(end), comp, end - start);
 			}
 		} else {
 			static_assert(false, "Provided callback function must transform iterators into keys or be a "
