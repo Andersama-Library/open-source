@@ -106,33 +106,34 @@ namespace sort {
 
 	template<class T> using iter_value_t = typename std::iterator_traits<sort::remove_cvref_t<T>>::value_type;
 #endif
-	
-	// Detect forward iterators vs random access iterators
-	template<typename, typename = std::void_t<>>
-	struct has_pre_increment_member : std::false_type {};
 
-	template<typename T> struct has_pre_increment_member<T, std::void_t<decltype(++std::declval<T&>())>> : std::true_type {};
+	// Detect forward iterators vs random access iterators
+	template<typename, typename = std::void_t<>> struct has_pre_increment_member : std::false_type {};
+
+	template<typename T>
+	struct has_pre_increment_member<T, std::void_t<decltype(++std::declval<T&>())>> : std::true_type {};
 
 	template<typename, typename = std::void_t<>> struct has_assign_addition_member : std::false_type {};
 
 	template<typename T>
-	struct has_assign_addition_member<T, std::void_t<decltype(std::declval<T&>()+=std::declval<size_t>())>> : std::true_type {};
+	struct has_assign_addition_member<T, std::void_t<decltype(std::declval<T&>() += std::declval<size_t>())>>
+		: std::true_type {};
 
 	template<typename, typename = std::void_t<>> struct has_addition_member : std::false_type {};
 
 	template<typename T>
-	struct has_addition_member<T, std::void_t<decltype(std::declval<T&>() + std::declval<size_t>())>>
-		: std::true_type {};
+	struct has_addition_member<T, std::void_t<decltype(std::declval<T&>() + std::declval<size_t>())>> : std::true_type {
+	};
 
-	template<class, class = std::void_t<>> struct has_type_member : std::false_type{};
-	template<class T> struct has_type_member<T, std::void_t<typename T::type>> : std::true_type{};
+	template<class, class = std::void_t<>> struct has_type_member : std::false_type {};
+	template<class T> struct has_type_member<T, std::void_t<typename T::type>> : std::true_type {};
 
-	template<typename It, typename Comp, bool is_comparator>
-	constexpr auto comparator_callback_type() {
+	template<typename It, typename Comp, bool is_comparator> constexpr auto comparator_callback_type()
+	{
 		using comparator_value_type = sort::remove_cvref_t<decltype(*std::declval<It>())>;
 		// using if constexpr to prevent the evaluation of std::invoke_result_t with types that don't work
 		if constexpr (is_comparator) {
-			return std::invoke_result_t<Comp, comparator_value_type, comparator_value_type>{};		
+			return std::invoke_result_t<Comp, comparator_value_type, comparator_value_type>{};
 		} else {
 			return std::invoke_result_t<Comp, comparator_value_type>{};
 		}
@@ -146,10 +147,10 @@ namespace sort {
 		static constexpr bool is_keyed = ::std::is_invocable<Comp, comparator_value_type>::value;
 		static_assert(is_comparator || is_keyed, "The provided callback requires one or two arguments");
 
-		using result_type = decltype(sort::comparator_callback_type<It,Comp,is_comparator>());
+		using result_type = decltype(sort::comparator_callback_type<It, Comp, is_comparator>());
 
-		static constexpr bool is_boolean_comparator = is_comparator && std::is_same<comparator_value_type,bool>::value;
-		static constexpr bool is_partition = is_keyed && std::is_same<result_type, bool>::value;
+		static constexpr bool is_boolean_comparator = is_comparator && std::is_same<comparator_value_type, bool>::value;
+		static constexpr bool is_partition          = is_keyed && std::is_same<result_type, bool>::value;
 	};
 
 	constexpr size_t insertion_sort_threshold   = 32;
@@ -293,7 +294,6 @@ namespace sort {
 	};
 
 	template<typename Callback> struct wrapped_greater_than : Callback {};
-
 	template<typename> struct is_wrapped_greater_than : std::false_type {};
 	template<typename Callback> struct is_wrapped_greater_than<wrapped_greater_than<Callback>> : std::true_type {};
 
@@ -1588,9 +1588,9 @@ namespace sort {
 					if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
 									::std::is_same<identity_greater_than<key_type>, ExtractKey>::value ||
 									sort::is_wrapped_greater_than<ExtractKey>::value) {
-						sort::iter_swap_conditional(first_it, second_it, k1 > k); //k > k1
+						sort::iter_swap_conditional(first_it, second_it, k1 > k); // k > k1
 					} else {
-						sort::iter_swap_conditional(first_it, second_it, k < k1); //k1 > k
+						sort::iter_swap_conditional(first_it, second_it, k < k1); // k1 > k
 					}
 				}
 
@@ -1788,10 +1788,10 @@ namespace sort {
 	template<typename key_type> constexpr size_t partition_count()
 	{
 		if constexpr (sort::is_tuple<key_type>::value) {
-			return partition_count(key_type());
+			return sort::partition_count(key_type());
 			// leaf_partitions<decltype(::std::get<0>(std::declval<key_type>())), depth + 1>() && depth < 2;
 		} else if constexpr (sort::is_array<key_type>::value) {
-			size_t partitions_0 = partition_count<decltype(::std::get<0>(std::declval<key_type>()))>();
+			size_t partitions_0 = sort::partition_count<decltype(::std::get<0>(std::declval<key_type>()))>();
 			size_t partitions   = 1;
 			for (size_t i = 0; i < ::std::tuple_size<key_type>::value; i++) {
 				partitions = (partitions_0 * partitions) > partitions ? (partitions_0 * partitions) : partitions;
@@ -1819,11 +1819,11 @@ namespace sort {
 	template<typename... key_types> constexpr size_t partition_count(std::tuple<key_types...>)
 	{
 		size_t partitions = 1;
-		((partitions = (partition_count<key_types>() * partitions) > partitions
-									   ? (partition_count<key_types>() * partitions)
+		((partitions = (sort::partition_count<key_types>() * partitions) > partitions
+									   ? (sort::partition_count<key_types>() * partitions)
 									   : partitions),
 						...);
-		bool any_zeroed = ((partition_count<key_types>() == 0) || ... || false);
+		bool any_zeroed = ((sort::partition_count<key_types>() == 0) || ... || false);
 		return partitions * !any_zeroed;
 	}
 
@@ -1836,9 +1836,9 @@ namespace sort {
 				   ::std::tuple_size<key_type>::value < 2; // each array index
 #if defined __has_include
 #if __has_include(<bitset>)
-		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) > 1) {
+		} else if constexpr (sort::is_bitset<key_type>::value && sort::bitset_size(key_type{}) > 1) {
 			return false;
-		} else if constexpr (is_bitset<key_type>::value && bitset_size(key_type{}) <= 1) {
+		} else if constexpr (sort::is_bitset<key_type>::value && sort::bitset_size(key_type{}) <= 1) {
 			return true;
 #endif
 #endif
@@ -2171,7 +2171,7 @@ namespace sort {
 		for (diff hole = bottom >> 1; hole > 0;) {
 			--hole;
 			sort::iter_value_t<It> tmp(std::move(*(start + hole)));
-			pop_heap_hole_by_index(start, hole, bottom, ::std::move(tmp), comp);
+			sort::pop_heap_hole_by_index(start, hole, bottom, ::std::move(tmp), comp);
 		}
 	}
 
@@ -2355,16 +2355,16 @@ namespace sort {
 	constexpr void intro_sort(It first, It last, Compare comp, size_t heapthresh)
 	{
 		if constexpr (is_std_less<Compare>::value) {
-			return intro_sort(first, last, sort::less<>{}, heapthresh);
+			return sort::intro_sort(first, last, sort::less<>{}, heapthresh);
 		} else if constexpr (is_std_greater<Compare>::value) {
-			return intro_sort(first, last, sort::greater<>{}, heapthresh);
+			return sort::intro_sort(first, last, sort::greater<>{}, heapthresh);
 		} else {
 			using value_type = sort::iter_value_t<It>;
 			for (;;) {
 				size_t count = sort::distance(first, last);
 				// TODO: find more cases where this makes sense to do
 				if constexpr (::std::is_default_constructible<value_type>::value &&
-								std::is_same<typename ::std::iterator_traits<It>::iterator_category,
+								::std::is_same<typename ::std::iterator_traits<It>::iterator_category,
 												::std::random_access_iterator_tag>::value) {
 					if (count <= small_merge_sort_threshold) { // this performs better
 						sort::small_merge_sort(first, last, comp);
@@ -2451,13 +2451,13 @@ namespace sort {
 			// so...we'll flip the extract function to keep the semantics the same as expected
 			sort::reversed_partition(get_unwrapped(start), get_unwrapped(end), comp);
 		} else if constexpr (std::is_integral<value_type>::value &&
-						   (std::is_same<Comp, sort::less<>>::value ||
-										   std::is_same<Comp, sort::less<value_type>>::value)) {
+							 (std::is_same<Comp, sort::less<>>::value ||
+											 std::is_same<Comp, sort::less<value_type>>::value)) {
 			// we're sorting integral data using < or >, use counting sort
 			sort::counting_sort(start, end, identity_less_than<value_type>{});
 		} else if constexpr (sort::is_convertible_to_integrals<value_type>::value &&
-						   (std::is_same<Comp, sort::less<>>::value ||
-										   std::is_same<Comp, sort::less<value_type>>::value)) {
+							 (std::is_same<Comp, sort::less<>>::value ||
+											 std::is_same<Comp, sort::less<value_type>>::value)) {
 			// we're sorting integral data using < or >, use counting sort
 			sort::counting_sort(start, end, identity_less_than<value_type>{});
 		} else if constexpr (std::is_integral<value_type>::value &&
