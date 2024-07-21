@@ -23,7 +23,7 @@ include(FetchContent)
 FetchContent_Declare(
     open_source
     GIT_REPOSITORY https://github.com/Andersama-Library/open-source.git
-    GIT_BRANCH c++
+    GIT_TAG c++
 )
 
 FetchContent_MakeAvailable(open_source)
