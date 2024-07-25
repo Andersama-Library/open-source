@@ -11,6 +11,20 @@
 #endif
 #endif
 
+#if defined __has_include
+#if __has_include(<optional>)
+#include <optional>
+#endif
+#endif
+
+/* TODO:
+#if defined __has_include
+#if __has_include(<variant>)
+#include <variant>
+#endif
+#endif
+*/
+
 /*
 MIT License
 
@@ -202,6 +216,13 @@ namespace sort {
 #if __has_include(<bitset>)
 	template<typename> struct is_bitset : std::false_type {};
 	template<size_t N> struct is_bitset<std::bitset<N>> : std::true_type {};
+#endif
+#endif
+
+#if defined __has_include
+#if __has_include(<optional>)
+	template<typename> struct is_optional : std::false_type {};
+	template<typename T> struct is_optional<std::optional<T>> : std::true_type {};
 #endif
 #endif
 
@@ -1766,6 +1787,13 @@ namespace sort {
 #endif
 #endif
 
+#if defined __has_include
+#if __has_include(<optional>)
+	template<typename T>
+	struct is_convertible_to_integrals<std::optional<T>> : std::bool_constant<is_convertible_to_integrals<T>::value> {};
+#endif
+#endif
+
 	template<> struct is_convertible_to_integrals<bool> : std::true_type {};
 
 	template<> struct is_convertible_to_integrals<uint64_t> : std::true_type {};
@@ -1803,6 +1831,12 @@ namespace sort {
 			return 0;
 		} else if constexpr (sort::is_bitset<key_type>::value && sort::bitset_size(key_type{}) <= 1) {
 			return 2;
+#endif
+#endif
+#if defined __has_include
+#if __has_include(<optional>)
+		} else if constexpr (sort::is_optional<key_type>::value) {
+			return 1 + sort::partition_count<typename key_type::value_type>();
 #endif
 #endif
 		} else if constexpr (::std::is_same<key_type, bool>::value || ::std::is_same<key_type, const bool&>::value) {
@@ -1965,7 +1999,25 @@ namespace sort {
 			// partition puts things that return true first...but counting sort should treat this as a value so...we'll
 			// flip the extract function to keep the semantics the same as expected
 			sort::partition_branchless(f, l, [](const auto& value) { return !ExtractKey{}(value); });
-		} else if constexpr (is_array<key_type>::value) {
+#if defined __has_include
+#if __has_include(<optional>)
+		} else if constexpr (sort::is_optional<key_type>::value) {
+			if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+							::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+				auto value_start_it = sort::partition_branchless(
+								f, l, [](const auto& value) { return !ExtractKey{}(value).has_value(); });
+				sort::counting_sort(value_start_it, end, sort::wrapped_greater_than([](const auto& value) {
+					return ExtractKey{}(value).value();
+				}));
+			} else {
+				auto last_value_it = sort::partition_branchless(
+								f, l, [](const auto& value) { return ExtractKey{}(value).has_value(); });
+				sort::counting_sort(
+								start, last_value_it, [](const auto& value) { return ExtractKey{}(value).value(); });
+			}
+#endif
+#endif
+		} else if constexpr (sort::is_array<key_type>::value) {
 			sort::counting_sort_recursive(f, l, extract_key,
 							sort::make_reversed_index_sequence(
 											std::make_index_sequence<std::tuple_size<key_type>::value>{}),
