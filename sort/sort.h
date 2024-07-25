@@ -17,13 +17,11 @@
 #endif
 #endif
 
-/* TODO:
 #if defined __has_include
 #if __has_include(<variant>)
 #include <variant>
 #endif
 #endif
-*/
 
 /*
 MIT License
@@ -226,6 +224,14 @@ namespace sort {
 #endif
 #endif
 
+	
+#if defined __has_include
+#if __has_include(<variant>)
+	template<typename> struct is_variant : std::false_type {};
+	template<typename... Ts> struct is_variant<std::variant<Ts...>> : std::true_type {};
+#endif
+#endif
+
 	template<typename T = void> struct identity_less_than {
 		[[nodiscard]] constexpr T&& operator()(T&& v) const noexcept
 		{
@@ -343,8 +349,8 @@ namespace sort {
 									  ::std::random_access_iterator_tag>) {
 			return end - start;
 		} else {
-			auto      f    = get_unwrapped(start);
-			auto      l    = get_unwrapped(end);
+			auto      f    = sort::get_unwrapped(start);
+			auto      l    = sort::get_unwrapped(end);
 			ptrdiff_t diff = 0;
 			for (; f != l; ++f)
 				++diff;
@@ -1794,6 +1800,28 @@ namespace sort {
 #endif
 #endif
 
+#if defined __has_include
+#if __has_include(<variant>)
+	template<typename... Ts>
+	struct is_convertible_to_integrals<std::variant<Ts...>>
+		: std::bool_constant<((sort::is_convertible_to_integrals<Ts>::value) && ... && true)> {};
+
+	template<typename... Ts>
+	constexpr auto index(const std::variant<Ts...> &v) noexcept {
+		size_t idx = v.index();
+		if constexpr (sizeof...(Ts) < 0x100ull) {
+			return uint8_t{idx};
+		} else if constexpr (sizeof...(Ts) < 0x10000ull) {
+			return uint16_t{idx};
+		} else if constexpr (sizeof...(Ts) < 0x100000000ull) {
+			return uint32_t{idx};
+		} else {
+			return idx;
+		}
+	}
+#endif
+#endif
+
 	template<> struct is_convertible_to_integrals<bool> : std::true_type {};
 
 	template<> struct is_convertible_to_integrals<uint64_t> : std::true_type {};
@@ -1812,6 +1840,12 @@ namespace sort {
 #endif
 
 	template<typename... key_types> constexpr size_t partition_count(std::tuple<key_types...>);
+
+#if defined __has_include
+#if __has_include(<variant>)
+	template<typename... key_types> constexpr size_t partition_count(std::variant<key_types...>);
+#endif
+#endif
 
 	template<typename key_type> constexpr size_t partition_count()
 	{
@@ -1833,10 +1867,18 @@ namespace sort {
 			return 2;
 #endif
 #endif
+
 #if defined __has_include
 #if __has_include(<optional>)
 		} else if constexpr (sort::is_optional<key_type>::value) {
 			return 1 + sort::partition_count<typename key_type::value_type>();
+#endif
+#endif
+
+#if defined __has_include
+#if __has_include(<variant>)
+		} else if constexpr (sort::is_variant<key_type>::value) {
+			return sort::partition_count(key_type());
 #endif
 #endif
 		} else if constexpr (::std::is_same<key_type, bool>::value || ::std::is_same<key_type, const bool&>::value) {
@@ -1860,6 +1902,21 @@ namespace sort {
 		bool any_zeroed = ((sort::partition_count<key_types>() == 0) || ... || false);
 		return partitions * !any_zeroed;
 	}
+
+#if defined __has_include
+#if __has_include(<variant>)
+	template<typename... key_types> constexpr size_t partition_count(std::variant<key_types...>)
+	{
+		size_t partitions = 1;
+		((partitions = (sort::partition_count<key_types>() * partitions) > partitions
+									   ? (sort::partition_count<key_types>() * partitions)
+									   : partitions),
+						...);
+		bool any_zeroed = ((sort::partition_count<key_types>() == 0) || ... || false);
+		return sizeof...(key_types) + partitions * !any_zeroed;
+	}
+#endif
+#endif
 
 	template<typename key_type, size_t depth = 0> constexpr bool leaf_partitions()
 	{
@@ -1981,6 +2038,16 @@ namespace sort {
 		if constexpr (is_tuple<key_type>::value) {
 			sort::counting_sort_recursive(f, l, extract_key,
 							std::make_index_sequence<std::tuple_size<key_type>::value>{}, parameter_list<>{});
+#if defined __has_include
+#if __has_include(<variant>)
+		} else if constexpr (sort::is_variant<key_type>::value) {
+			sort::counting_sort(start, end, [](const auto& value) {
+				key_type v = ExtractKey{}(value);
+				return std::make_tuple(sort::index(v), v);
+			});
+#endif
+#endif
+
 #if defined __has_include
 #if __has_include(<bitset>)
 		} else if constexpr (sort::is_bitset<key_type>::value && sort::bitset_size(key_type{}) > 1) {
@@ -2501,7 +2568,7 @@ namespace sort {
 		} else if constexpr (comparator_details::is_partition) {
 			// partition puts things that return true first...but counting sort should treat this as a value
 			// so...we'll flip the extract function to keep the semantics the same as expected
-			sort::reversed_partition(get_unwrapped(start), get_unwrapped(end), comp);
+			sort::reversed_partition(sort::get_unwrapped(start), sort::get_unwrapped(end), comp);
 		} else if constexpr (std::is_integral<value_type>::value &&
 							 (std::is_same<Comp, sort::less<>>::value ||
 											 std::is_same<Comp, sort::less<value_type>>::value)) {
