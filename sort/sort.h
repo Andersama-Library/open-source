@@ -1959,8 +1959,8 @@ namespace sort {
 							std::is_same<typename ::std::iterator_traits<It>::iterator_category,
 											::std::random_access_iterator_tag>::value) {
 				if (item_count <= small_merge_sort_threshold) {
-					if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
-									::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+					if constexpr (::std::is_same<sort::identity_less_than<>, ExtractKey>::value ||
+									::std::is_same<sort::identity_less_than<key_type>, ExtractKey>::value) {
 						return sort::small_merge_sort(f, l, [](const auto& lhs, const auto& rhs) {
 							using namespace sort;
 							return lhs < rhs;
@@ -1980,14 +1980,14 @@ namespace sort {
 				}
 			} else {
 				if (item_count <= insertion_sort_threshold) {
-					if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
-									::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+					if constexpr (::std::is_same<sort::identity_less_than<>, ExtractKey>::value ||
+									::std::is_same<sort::identity_less_than<key_type>, ExtractKey>::value) {
 						return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) {
 							using namespace sort;
 							return lhs < rhs;
 						});
-					} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-										 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+					} else if constexpr (::std::is_same<sort::identity_greater_than<>, ExtractKey>::value ||
+										 ::std::is_same<sort::identity_greater_than<key_type>, ExtractKey>::value) {
 						return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) {
 							using namespace sort;
 							return lhs > rhs;
@@ -2001,8 +2001,8 @@ namespace sort {
 				}
 
 				if (item_count <= intro_sort_threshold) {
-					if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
-									::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+					if constexpr (::std::is_same<sort::identity_less_than<>, ExtractKey>::value ||
+									::std::is_same<sort::identity_less_than<key_type>, ExtractKey>::value) {
 						sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) {
 							using namespace sort;
 							return lhs < rhs;
@@ -2011,8 +2011,8 @@ namespace sort {
 							using namespace sort;
 							return lhs < rhs;
 						});
-					} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-										 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+					} else if constexpr (::std::is_same<sort::identity_greater_than<>, ExtractKey>::value ||
+										 ::std::is_same<sort::identity_greater_than<key_type>, ExtractKey>::value) {
 						sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) {
 							using namespace sort;
 							return lhs > rhs;
@@ -2054,8 +2054,8 @@ namespace sort {
 
 			sort::counting_sort_recursive(f, l, extract_key, std::index_sequence<0>{}, parameter_list<>{});
 		} else if constexpr (sort::is_bitset<key_type>::value && sort::bitset_size(key_type{}) <= 1) {
-			if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-							::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+			if constexpr (::std::is_same<sort::identity_greater_than<>, ExtractKey>::value ||
+							::std::is_same<sort::identity_greater_than<key_type>, ExtractKey>::value) {
 				sort::partition_branchless(f, l, [](const auto& value) { return (ExtractKey{}(value)[0]); });
 			} else {
 				sort::partition_branchless(f, l, [](const auto& value) { return !(ExtractKey{}(value)[0]); });
@@ -2069,8 +2069,8 @@ namespace sort {
 #if defined __has_include
 #if __has_include(<optional>)
 		} else if constexpr (sort::is_optional<key_type>::value) {
-			if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-							::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+			if constexpr (::std::is_same<sort::identity_greater_than<>, ExtractKey>::value ||
+							::std::is_same<sort::identity_greater_than<key_type>, ExtractKey>::value) {
 				auto value_start_it = sort::partition_branchless(
 								f, l, [](const auto& value) { return !ExtractKey{}(value).has_value(); });
 				sort::counting_sort(value_start_it, end, sort::wrapped_greater_than([](const auto& value) {
@@ -2090,8 +2090,8 @@ namespace sort {
 											std::make_index_sequence<std::tuple_size<key_type>::value>{}),
 							parameter_list<>{});
 		} else if constexpr (::std::is_integral<key_type>::value) {
-			if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
-							::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+			if constexpr (::std::is_same<sort::identity_less_than<>, ExtractKey>::value ||
+							::std::is_same<sort::identity_less_than<key_type>, ExtractKey>::value) {
 				if constexpr (::std::is_signed<key_type>::value) {
 					using unsigned_type               = typename ::std::make_unsigned<key_type>::type;
 					constexpr unsigned_type min_value = sort::minimum_unsigned_value<key_type>();
@@ -2104,8 +2104,8 @@ namespace sort {
 				} else {
 					sort::counting_sort_recursive(f, l, extract_key, std::index_sequence<0>{}, parameter_list<>{});
 				}
-			} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-								 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+			} else if constexpr (::std::is_same<sort::identity_greater_than<>, ExtractKey>::value ||
+								 ::std::is_same<sort::identity_greater_than<key_type>, ExtractKey>::value) {
 				if constexpr (::std::is_signed<key_type>::value) {
 					using unsigned_type               = typename ::std::make_unsigned<key_type>::type;
 					constexpr unsigned_type min_value = sort::minimum_unsigned_value<key_type>();
@@ -2132,9 +2132,9 @@ namespace sort {
 	{
 		using T = sort::iter_value_t<It>;
 		auto i  = first;
-		if constexpr (is_std_less<Compare>::value) {
+		if constexpr (sort::is_std_less<Compare>::value) {
 			return sort::insertion_sort(first, last, sort::less<>{});
-		} else if constexpr (is_std_greater<Compare>::value) {
+		} else if constexpr (sort::is_std_greater<Compare>::value) {
 			return sort::insertion_sort(first, last, sort::greater<>{});
 		} else {
 			using namespace sort;
@@ -2533,7 +2533,7 @@ namespace sort {
 	template<typename It, typename Comp = sort::less<>> constexpr sorting_algorithms sorting_algorithm(It, It, Comp)
 	{
 		using value_type         = decltype(*std::declval<It>());
-		using comparator_details = comparator_info<It, Comp>;
+		using comparator_details = sort::comparator_info<It, Comp>;
 
 		if constexpr (comparator_details::is_partition) {
 			return s_partition;
@@ -2555,7 +2555,7 @@ namespace sort {
 	template<typename It, typename Comp = sort::less<>> constexpr void sort(It start, It end, Comp comp = Comp{})
 	{
 		using value_type         = sort::remove_cvref_t<decltype(*std::declval<It>())>;
-		using comparator_details = comparator_info<It, Comp>;
+		using comparator_details = sort::comparator_info<It, Comp>;
 
 		if constexpr (std::is_same<Comp, std::less<value_type>>::value) {
 			sort::sort(start, end, sort::less<value_type>{});
@@ -2573,20 +2573,20 @@ namespace sort {
 							 (std::is_same<Comp, sort::less<>>::value ||
 											 std::is_same<Comp, sort::less<value_type>>::value)) {
 			// we're sorting integral data using < or >, use counting sort
-			sort::counting_sort(start, end, identity_less_than<value_type>{});
+			sort::counting_sort(start, end, sort::identity_less_than<value_type>{});
 		} else if constexpr (sort::is_convertible_to_integrals<value_type>::value &&
 							 (std::is_same<Comp, sort::less<>>::value ||
 											 std::is_same<Comp, sort::less<value_type>>::value)) {
 			// we're sorting integral data using < or >, use counting sort
-			sort::counting_sort(start, end, identity_less_than<value_type>{});
+			sort::counting_sort(start, end, sort::identity_less_than<value_type>{});
 		} else if constexpr (std::is_integral<value_type>::value &&
 							 (std::is_same<Comp, sort::greater<>>::value ||
 											 std::is_same<Comp, sort::greater<value_type>>::value)) {
-			sort::counting_sort(start, end, identity_greater_than<value_type>{});
+			sort::counting_sort(start, end, sort::identity_greater_than<value_type>{});
 		} else if constexpr (sort::is_convertible_to_integrals<value_type>::value &&
 							 (std::is_same<Comp, sort::greater<>>::value ||
 											 std::is_same<Comp, sort::greater<value_type>>::value)) {
-			sort::counting_sort(start, end, identity_greater_than<value_type>{});
+			sort::counting_sort(start, end, sort::identity_greater_than<value_type>{});
 		} else if constexpr (comparator_details::is_keyed) {
 			sort::counting_sort(start, end, comp);
 		} else if constexpr (comparator_details::is_comparator) {
