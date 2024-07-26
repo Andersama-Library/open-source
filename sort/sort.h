@@ -224,7 +224,6 @@ namespace sort {
 #endif
 #endif
 
-	
 #if defined __has_include
 #if __has_include(<variant>)
 	template<typename> struct is_variant : std::false_type {};
@@ -786,12 +785,26 @@ namespace sort {
 	}
 
 	struct counting_sort_bytes {
-		uint64_t idxs      = {};
-		uint8_t  bytes     = {};
-		uint8_t  byte_idx  = {};
-		uint8_t  processed = {};
+		// uint64_t idxs      = {};
+		uint64_t processed = {};
+		// uint8_t  bytes     = {};
+		uint64_t byte_idx = ~0ull;
+		// uint8_t  processed = {};
 	};
+	/*
+	template<size_t bytes> constexpr counting_sort_bytes counting_sort_bytes_init()
+	{
+		sort::counting_sort_bytes counting_sort_marked{};
 
+		for (uint64_t x = bytes; --x < bytes && x < sizeof(counting_sort_marked.idxs);) {
+			counting_sort_marked.idxs |= (x << (8 * counting_sort_marked.bytes));
+			counting_sort_marked.bytes += 1;
+		}
+
+		counting_sort_marked.bytes = bytes;
+		return counting_sort_marked;
+	}
+	*/
 	// NOTE: only exists because I *thought* I found a bug in MSVC AND CLANG codegen...
 	template<typename T> always_force_inline constexpr auto minimum_unsigned_value()
 	{
@@ -1007,8 +1020,9 @@ namespace sort {
 		// sort::remove_cvref_t<decltype(::std::get<Idx>(ExtractKey{}(*std::declval<It>())))>; // this works for both
 		// tuples and arrays
 		if constexpr (sort::is_tuple<key_type>::value) {
-			remaining.bytes    = 0;
-			remaining.byte_idx = 0;
+			// remaining.bytes    = 0;
+			// remaining.byte_idx = 0;
+			remaining.byte_idx = ~0ull;
 			if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
 							::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
 				if constexpr (sizeof...(Idxs)) {
@@ -1084,8 +1098,7 @@ namespace sort {
 				}
 			}
 			if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
-				remaining.bytes    = 0;
-				remaining.byte_idx = 0;
+				remaining.byte_idx = ~0ull;
 				if constexpr (sizeof...(Idxs)) {
 					sort::counting_sort_recursive(start, split, extract_key, std::index_sequence<Idxs...>{},
 									parameter_list<Deferred...>{});
@@ -1101,8 +1114,7 @@ namespace sort {
 				}
 			}
 		} else if constexpr (sort::is_array<key_type>::value) {
-			remaining.bytes    = 0;
-			remaining.byte_idx = 0;
+			remaining.byte_idx = ~0ull;
 			if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
 							::std::is_same<identity_greater_than<key_type>, ExtractKey>::value ||
 							sort::is_wrapped_greater_than<ExtractKey>::value) {
@@ -1186,16 +1198,39 @@ namespace sort {
 			It iterators[iterator_count];
 
 			{
-				sort::counting_sort_bytes next{};
-				for (uint64_t x = sizeof(key_type); --x < sizeof(key_type);) {
-					next.idxs |= (x << (8 * next.bytes));
-					next.bytes += 1;
+				// sort::counting_sort_bytes next{};
+				// for (uint64_t x = sizeof(key_type); --x < sizeof(key_type);) {
+				//	next.idxs |= (x << (8 * next.bytes));
+				//	next.bytes += 1;
+				// }
+				/*
+				if constexpr (sort::is_bitset<key_type>::value) {
+					constexpr size_t                    bitset_bits  = sort::bitset_size(key_type());
+					constexpr size_t                    bitset_bytes = (bitset_bits / 8) + ((bitset_bits % 8) > 0);
+					constexpr sort::counting_sort_bytes next         = sort::counting_sort_bytes_init<bitset_bytes>();
+					remaining.idxs                                   = next.idxs;
+					remaining.bytes                                  = next.bytes;
+				} else {
+					constexpr sort::counting_sort_bytes next = sort::counting_sort_bytes_init<sizeof(key_type)>();
+					remaining.idxs                           = next.idxs;
+					remaining.bytes                          = next.bytes;
 				}
-				remaining.idxs  = next.idxs;
-				remaining.bytes = next.bytes;
+				*/
 			}
-			uint32_t x      = remaining.bytes ? ((remaining.idxs >> (remaining.byte_idx << 3)) & 0xff)
-											  : sizeof(key_type) - 1;
+			uint32_t x;
+			if constexpr (sort::is_bitset<key_type>::value) {
+				constexpr size_t bitset_bits  = sort::bitset_size(key_type());
+				constexpr size_t bitset_bytes = (bitset_bits / 8) + ((bitset_bits % 8) > 0);
+				x = remaining.byte_idx >= bitset_bytes ? bitset_bytes - 1 : remaining.byte_idx;
+			} else {
+				x = remaining.byte_idx >= sizeof(key_type) ? sizeof(key_type) - 1 : remaining.byte_idx;
+			}
+			remaining.byte_idx = x;
+			// remaining.byte_idx >=  ? : ;
+			/*
+			remaining.bytes ? ((remaining.idxs >> (remaining.byte_idx << 3)) & 0xff)
+										  : sizeof(key_type) - 1;
+										  */
 			bit_shift       = x << 3;
 			fallback0_count = 0;
 			fallback1_count = 0;
@@ -1272,7 +1307,8 @@ namespace sort {
 				size_t   idx          = 0;
 				size_t   total        = 0;
 				size_t   prev_idx     = 0;
-				uint16_t current_byte = (remaining.idxs >> (remaining.byte_idx << 3)) & 0xff;
+				uint16_t current_byte = remaining.byte_idx;
+				//(remaining.idxs >> (remaining.byte_idx << 3)) & 0xff;
 
 				// NOTE: optimize this furthur
 				if constexpr (is_forward_iterator || is_bidirectional_iterator) {
@@ -1394,6 +1430,7 @@ namespace sort {
 
 			if (!is_ordered) {
 				size_t sorted_count = 0;
+				remaining.processed += 1;
 				do {
 					if constexpr (is_forward_iterator || is_bidirectional_iterator) {
 						for (size_t x = 0; x < 256; x++) {
@@ -1561,7 +1598,9 @@ namespace sort {
 			// if (partitions == total_items) // the branchless approach doesn't need this, handled by the fact we skip
 			// 	return;
 			if constexpr ((sizeof...(Idxs)) == 0 && (sizeof...(Deferred) == 0)) {
-				if (remaining.bytes <= 1) // we have other parts of the key to extract
+				// if (remaining.bytes <= 1) // we have other parts of the key to extract
+				//	return;
+				if (remaining.byte_idx == 0)
 					return;
 			}
 
@@ -1622,9 +1661,10 @@ namespace sort {
 				}
 
 				if constexpr (sizeof...(Idxs) || sizeof...(Deferred)) {
-					if ((remaining.byte_idx + 1) >= remaining.bytes) {
-						remaining.bytes    = 0;
-						remaining.byte_idx = 0;
+					if (remaining.byte_idx == 0) { //(remaining.byte_idx + 1) >= remaining.bytes
+						//remaining.bytes    = 0;
+						//remaining.byte_idx = 0;
+						remaining.byte_idx = ~0ull;
 						for (uint16_t p = 0; p < recursion_count; p++) {
 							uint8_t next_i = stack.idxs[p];
 
@@ -1642,7 +1682,7 @@ namespace sort {
 							}
 						}
 					} else {
-						remaining.byte_idx += 1;
+						remaining.byte_idx -= 1;
 						for (uint16_t p = 0; p < recursion_count; p++) {
 							uint8_t next_i = stack.idxs[p];
 
@@ -1652,9 +1692,9 @@ namespace sort {
 						}
 					}
 				} else {
-					if (remaining.byte_idx >= remaining.bytes) {
+					if (remaining.byte_idx == 0) { // remaining.byte_idx >= remaining.bytes
 					} else {
-						remaining.byte_idx += 1;
+						remaining.byte_idx -= 1;
 						for (uint16_t p = 0; p < recursion_count; p++) {
 							uint8_t next_i = stack.idxs[p];
 
@@ -1706,9 +1746,10 @@ namespace sort {
 
 				if (remaining.processed < 8) {
 					if constexpr (sizeof...(Idxs) || sizeof...(Deferred)) {
-						if ((remaining.byte_idx + 1) >= remaining.bytes) {
-							remaining.bytes    = 0;
-							remaining.byte_idx = 0;
+						if (remaining.byte_idx == 0) { //(remaining.byte_idx + 1) >= remaining.bytes
+							// remaining.bytes    = 0;
+							// remaining.byte_idx = 0;
+							remaining.byte_idx = ~0ull;
 							for (uint16_t p = 0; p < recursion_count; p++) {
 								uint8_t next_i = stack.idxs[p];
 
@@ -1729,7 +1770,7 @@ namespace sort {
 								}
 							}
 						} else {
-							remaining.byte_idx += 1;
+							remaining.byte_idx -= 1;
 							for (uint16_t p = 0; p < recursion_count; p++) {
 								uint8_t next_i = stack.idxs[p];
 
@@ -1742,9 +1783,9 @@ namespace sort {
 							}
 						}
 					} else {
-						if (remaining.byte_idx >= remaining.bytes) {
+						if (remaining.byte_idx == 0) { // remaining.byte_idx >= remaining.bytes
 						} else {
-							remaining.byte_idx += 1;
+							remaining.byte_idx -= 1;
 							for (uint16_t p = 0; p < recursion_count; p++) {
 								uint8_t next_i = stack.idxs[p];
 
@@ -1806,8 +1847,8 @@ namespace sort {
 	struct is_convertible_to_integrals<std::variant<Ts...>>
 		: std::bool_constant<((sort::is_convertible_to_integrals<Ts>::value) && ... && true)> {};
 
-	template<typename... Ts>
-	constexpr auto index(const std::variant<Ts...> &v) noexcept {
+	template<typename... Ts> constexpr auto index(const std::variant<Ts...>& v) noexcept
+	{
 		size_t idx = v.index();
 		if constexpr (sizeof...(Ts) < 0x100ull) {
 			return uint8_t{idx};
