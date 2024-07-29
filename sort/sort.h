@@ -658,12 +658,12 @@ namespace sort {
 					It start, It end, Compare comp = Compare{}, size_t diff = N)
 	{
 		using value_type = sort::iter_value_t<It>;
-		std::array<value_type, N> buffer;
+		value_type buffer[N];
 
 		size_t stop   = (diff >> 2) + ((diff & 0x3) > 0);
 		size_t stride = 1;
 
-		auto b0 = buffer.data();
+		value_type* b0 = buffer;
 		for (;;) {
 			auto   it      = start;
 			size_t stride2 = stride << 1;
