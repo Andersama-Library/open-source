@@ -669,7 +669,7 @@ namespace sort {
 			size_t stride2 = stride << 1;
 			size_t stride3 = stride2 + stride;
 			size_t step    = stride << 2;
-			for (; (end - it) >= step;) { // 1 -> 2 -> 4,  4 -> 8 -> 16, 16 -> 32 -> 64, 64 -> 128 -> 256
+			for (; ((size_t)(end - it)) >= step;) { // 1 -> 2 -> 4,  4 -> 8 -> 16, 16 -> 32 -> 64, 64 -> 128 -> 256
 				auto m0 = it + stride;
 				auto l0 = it + stride2;
 				auto m1 = it + stride3;
@@ -1179,7 +1179,7 @@ namespace sort {
 											std::bidirectional_iterator_tag>::value;
 			constexpr bool can_small_sort = ::std::is_default_constructible<value_type>::value &&
 											std::is_same<typename ::std::iterator_traits<It>::iterator_category,
-															::std::random_access_iterator_tag>::value;
+															::std::random_access_iterator_tag>::value && false;
 			// constexpr size_t initial_count_indexs      = 256 * sizeof(key_type);
 			constexpr size_t required_start_end_indexs = 257 * sizeof(key_type);
 			constexpr size_t count_indexs              = 256;
@@ -1188,7 +1188,7 @@ namespace sort {
 
 			counting_sort_memory<index_type> stack;
 
-			uint32_t bit_shift;
+			size_t   bit_shift;
 			uint8_t  is_ordered;
 			uint8_t  last_key;
 			uint16_t fallback0_count;
@@ -1217,7 +1217,7 @@ namespace sort {
 				}
 				*/
 			}
-			uint32_t x;
+			uint64_t x;
 			if constexpr (sort::is_bitset<key_type>::value) {
 				constexpr size_t bitset_bits  = sort::bitset_size(key_type());
 				constexpr size_t bitset_bytes = (bitset_bits / 8) + ((bitset_bits % 8) > 0);
@@ -1989,6 +1989,10 @@ namespace sort {
 	constexpr void counting_sort(It start, It end, ExtractKey extract_key)
 	{
 		using key_type = sort::remove_cvref_t<decltype(ExtractKey{}(::std::move(*std::declval<It>())))>;
+		constexpr bool can_small_sort = ::std::is_default_constructible<value_type>::value &&
+										std::is_same<typename ::std::iterator_traits<It>::iterator_category,
+														::std::random_access_iterator_tag>::value && false;
+
 		constexpr size_t potential_partitions = sort::partition_count<key_type>();
 		auto             f                    = sort::get_unwrapped(start);
 		auto             l                    = sort::get_unwrapped(end);
@@ -1996,9 +2000,7 @@ namespace sort {
 						std::is_same<typename ::std::iterator_traits<It>::iterator_category,
 										::std::random_access_iterator_tag>::value) {
 			auto item_count = l - f;
-			if constexpr (::std::is_default_constructible<key_type>::value &&
-							std::is_same<typename ::std::iterator_traits<It>::iterator_category,
-											::std::random_access_iterator_tag>::value) {
+			if constexpr (can_small_sort) {
 				if (item_count <= small_merge_sort_threshold) {
 					if constexpr (::std::is_same<sort::identity_less_than<>, ExtractKey>::value ||
 									::std::is_same<sort::identity_less_than<key_type>, ExtractKey>::value) {
