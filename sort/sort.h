@@ -1180,6 +1180,14 @@ namespace sort {
 			constexpr bool can_small_sort = ::std::is_default_constructible<value_type>::value &&
 											std::is_same<typename ::std::iterator_traits<It>::iterator_category,
 															::std::random_access_iterator_tag>::value;
+
+			constexpr bool is_default_less_than = ::std::is_same<identity_less_than<>, ExtractKey>::value ||
+												  ::std::is_same<identity_less_than<key_type>, ExtractKey>::value;
+			constexpr bool is_default_greater_than = ::std::is_same<identity_greater_than<>, ExtractKey>::value ||
+													 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value;
+			constexpr bool is_wrapped_greater_than =
+							is_default_greater_than || sort::is_wrapped_greater_than<ExtractKey>::value;
+
 			// constexpr size_t initial_count_indexs      = 256 * sizeof(key_type);
 			constexpr size_t required_start_end_indexs = 257 * sizeof(key_type);
 			constexpr size_t count_indexs              = 256;
@@ -1247,8 +1255,7 @@ namespace sort {
 			for (It it = start; it != end; ++it) {
 				key_type k;
 				uint8_t  key_byte;
-				if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
-								::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+				if constexpr (is_default_less_than) {
 					if constexpr (sort::is_tuple<extract_type>::value) {
 						k = std::get<Idx>(*it);
 					} else if constexpr (sort::is_array<extract_type>::value) {
@@ -1256,8 +1263,7 @@ namespace sort {
 					} else {
 						k = *it;
 					}
-				} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-									 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+				} else if constexpr (is_default_greater_than) {
 					if constexpr (sort::is_tuple<extract_type>::value) {
 						k = std::get<Idx>(*it);
 					} else if constexpr (sort::is_array<extract_type>::value) {
@@ -1289,9 +1295,7 @@ namespace sort {
 					key_byte = sort::treat_as_unsigned_rshifted(k, bit_shift);
 				}
 				// reverse the sort direction by inverting the key
-				if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-								::std::is_same<identity_greater_than<key_type>, ExtractKey>::value ||
-								sort::is_wrapped_greater_than<ExtractKey>::value) {
+				if constexpr (is_wrapped_greater_than) {
 					key_byte = ~key_byte;
 				}
 				// counts[key_byte] = total_items;
@@ -1445,8 +1449,7 @@ namespace sort {
 
 								key_type k;
 								uint8_t  key_byte;
-								if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
-												::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+								if constexpr (is_default_less_than) {
 									if constexpr (sort::is_tuple<extract_type>::value) {
 										k = std::get<Idx>(*swap_left);
 									} else if constexpr (sort::is_array<extract_type>::value) {
@@ -1454,9 +1457,7 @@ namespace sort {
 									} else {
 										k = *swap_left;
 									}
-								} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-													 ::std::is_same<identity_greater_than<key_type>,
-																	 ExtractKey>::value) {
+								} else if constexpr (is_default_greater_than) {
 									if constexpr (sort::is_tuple<extract_type>::value) {
 										k = std::get<Idx>(*swap_left);
 									} else if constexpr (sort::is_array<extract_type>::value) {
@@ -1490,9 +1491,7 @@ namespace sort {
 								}
 
 								// reverse the sort direction by inverting the key
-								if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-												::std::is_same<identity_greater_than<key_type>, ExtractKey>::value ||
-												sort::is_wrapped_greater_than<ExtractKey>::value) {
+								if constexpr (is_wrapped_greater_than) {
 									key_byte = ~key_byte;
 								}
 
@@ -1519,8 +1518,7 @@ namespace sort {
 
 								key_type k;
 								uint8_t  key_byte;
-								if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
-												::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+								if constexpr (is_default_less_than) {
 									if constexpr (sort::is_tuple<extract_type>::value) {
 										k = std::get<Idx>(*swap_left);
 									} else if constexpr (sort::is_array<extract_type>::value) {
@@ -1528,9 +1526,7 @@ namespace sort {
 									} else {
 										k = *swap_left;
 									}
-								} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-													 ::std::is_same<identity_greater_than<key_type>,
-																	 ExtractKey>::value) {
+								} else if constexpr (is_default_greater_than) {
 									if constexpr (sort::is_tuple<extract_type>::value) {
 										k = std::get<Idx>(*swap_left);
 									} else if constexpr (sort::is_array<extract_type>::value) {
@@ -1564,9 +1560,7 @@ namespace sort {
 								}
 
 								// reverse the sort direction by inverting the key
-								if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-												::std::is_same<identity_greater_than<key_type>, ExtractKey>::value ||
-												sort::is_wrapped_greater_than<ExtractKey>::value) {
+								if constexpr (is_wrapped_greater_than) {
 									key_byte = ~key_byte;
 								}
 
@@ -1614,8 +1608,7 @@ namespace sort {
 					key_type k;
 					key_type k1;
 
-					if constexpr (::std::is_same<identity_less_than<>, ExtractKey>::value ||
-									::std::is_same<identity_less_than<key_type>, ExtractKey>::value) {
+					if constexpr (is_default_less_than) {
 						if constexpr (sort::is_tuple<extract_type>::value) {
 							k  = std::get<Idx>(*first_it);
 							k1 = std::get<Idx>(*second_it);
@@ -1626,8 +1619,7 @@ namespace sort {
 							k  = *first_it;
 							k1 = *second_it;
 						}
-					} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-										 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
+					} else if constexpr (is_default_greater_than) {
 						if constexpr (sort::is_tuple<extract_type>::value) {
 							k  = std::get<Idx>(*first_it);
 							k1 = std::get<Idx>(*second_it);
@@ -1651,9 +1643,7 @@ namespace sort {
 						}
 					}
 
-					if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
-									::std::is_same<identity_greater_than<key_type>, ExtractKey>::value ||
-									sort::is_wrapped_greater_than<ExtractKey>::value) {
+					if constexpr (is_wrapped_greater_than) {
 						sort::iter_swap_conditional(first_it, second_it, k1 > k); // k > k1
 					} else {
 						sort::iter_swap_conditional(first_it, second_it, k < k1); // k1 > k
@@ -1662,8 +1652,8 @@ namespace sort {
 
 				if constexpr (sizeof...(Idxs) || sizeof...(Deferred)) {
 					if (remaining.byte_idx == 0) { //(remaining.byte_idx + 1) >= remaining.bytes
-						//remaining.bytes    = 0;
-						//remaining.byte_idx = 0;
+						// remaining.bytes    = 0;
+						// remaining.byte_idx = 0;
 						remaining.byte_idx = ~0ull;
 						for (uint16_t p = 0; p < recursion_count; p++) {
 							uint8_t next_i = stack.idxs[p];
