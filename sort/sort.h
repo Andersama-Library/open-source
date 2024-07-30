@@ -231,6 +231,29 @@ namespace sort {
 #endif
 #endif
 
+	template<typename T = void> struct identity {
+		[[nodiscard]] constexpr T&& operator()(T&& v) const noexcept
+		{
+			return ::std::forward<T>(v);
+		}
+		[[nodiscard]] constexpr const T& operator()(const T& v) const noexcept
+		{
+			return v;
+		}
+	};
+
+	template<> struct identity<void> {
+		template<class T> [[nodiscard]] constexpr T&& operator()(T&& v) const noexcept
+		{
+			return ::std::forward<T>(v);
+		}
+		template<class T> [[nodiscard]] constexpr const T& operator()(const T& v) const noexcept
+		{
+			return v;
+		}
+	};
+
+	// wrappers to pass along > or < contextually
 	template<typename T = void> struct identity_less_than {
 		[[nodiscard]] constexpr T&& operator()(T&& v) const noexcept
 		{
@@ -427,7 +450,8 @@ namespace sort {
 #endif
 #endif
 
-	template<class It, class Compare = sort::less<>> constexpr void insertion_sort(It, It, Compare comp = Compare{});
+	template<class It, class Compare = sort::less<>, class Proj = sort::identity<>>
+	constexpr void insertion_sort(It, It, Compare comp = Compare{}, Proj proj = Proj{});
 
 	template<typename It, typename Compare = sort::less<>>
 	constexpr void intro_sort(It, It, Compare = Compare{}, size_t = ~size_t{0});
@@ -537,10 +561,20 @@ namespace sort {
 		}
 	}
 
-	template<typename It, typename It2, typename It3, typename It4, typename ItDest, typename Compare = std::less<>>
-	always_force_inline constexpr ItDest merge(It first0, It2 last0, It3 first1, It4 last1, ItDest out, Compare comp)
+	template<typename It, typename It2, typename It3, typename It4, typename ItDest, typename Comp = sort::less<>,
+					typename Proj = sort::identity<>>
+	always_force_inline constexpr ItDest merge(
+					It first0, It2 last0, It3 first1, It4 last1, ItDest out, Comp comp = Comp{}, Proj proj = Proj{})
 	{
-		using T = sort::iter_value_t<It>;
+		using T        = sort::iter_value_t<It>;
+		using key_type = decltype(Proj{}(*std::declval<It>()));
+
+		constexpr bool is_identity = std::is_same<Proj, sort::identity<>>::value ||
+									 std::is_same<Proj, sort::identity<key_type>>::value;
+		constexpr bool is_less_than =
+						std::is_same<Comp, sort::less<>>::value || std::is_same<Comp, sort::less<key_type>>::value;
+		constexpr bool is_greater_than = std::is_same<Comp, sort::greater<>>::value ||
+										 std::is_same<Comp, sort::greater<key_type>>::value;
 
 		if constexpr ((std::is_arithmetic<T>::value || std::is_same<T, bool>::value) &&
 						std::is_same<sort::remove_cvref_t<decltype(*first0)>, T>::value) {
@@ -548,7 +582,28 @@ namespace sort {
 			// reference wrappers
 			if (first0 != last0 && first1 != last1) {
 				for (;;) {
-					if (comp(*first1, *first0)) {
+					bool swap_first1;
+					if constexpr (is_identity && is_less_than) {
+						swap_first1 = *first1 < *first0;
+					} else if constexpr (is_identity && is_greater_than) {
+						swap_first1 = *first1 > *first0;
+					} else if constexpr (is_identity) {
+						swap_first1 = comp(*first1, *first0);
+					} else if constexpr (!is_identity && is_less_than) {
+						key_type lhs = proj(*first1);
+						key_type rhs = proj(*first0);
+						swap_first1  = lhs < rhs;
+					} else if constexpr (!is_identity && is_greater_than) {
+						key_type lhs = proj(*first1);
+						key_type rhs = proj(*first0);
+						swap_first1  = lhs > rhs;
+					} else {
+						key_type lhs = proj(*first1);
+						key_type rhs = proj(*first0);
+						swap_first1  = comp(lhs, rhs);
+					}
+
+					if (swap_first1) {
 						*out = *first1;
 						++out;
 						++first1;
@@ -582,7 +637,28 @@ namespace sort {
 		} else if constexpr (std::is_move_constructible<T>::value) {
 			if (first0 != last0 && first1 != last1) {
 				for (;;) {
-					if (comp(*first1, *first0)) {
+					bool swap_first1;
+					if constexpr (is_identity && is_less_than) {
+						swap_first1 = *first1 < *first0;
+					} else if constexpr (is_identity && is_greater_than) {
+						swap_first1 = *first1 > *first0;
+					} else if constexpr (is_identity) {
+						swap_first1 = comp(*first1, *first0);
+					} else if constexpr (!is_identity && is_less_than) {
+						key_type lhs = proj(*first1);
+						key_type rhs = proj(*first0);
+						swap_first1  = lhs < rhs;
+					} else if constexpr (!is_identity && is_greater_than) {
+						key_type lhs = proj(*first1);
+						key_type rhs = proj(*first0);
+						swap_first1  = lhs > rhs;
+					} else {
+						key_type lhs = proj(*first1);
+						key_type rhs = proj(*first0);
+						swap_first1  = comp(lhs, rhs);
+					}
+
+					if (swap_first1) {
 						*out = ::std::move(*first1); //
 						++out;
 						++first1;
@@ -616,7 +692,28 @@ namespace sort {
 		} else { // else if constexpr (std::is_assignable<T, T>::value)
 			if (first0 != last0 && first1 != last1) {
 				for (;;) {
-					if (comp(*first1, *first0)) {
+					bool swap_first1;
+					if constexpr (is_identity && is_less_than) {
+						swap_first1 = *first1 < *first0;
+					} else if constexpr (is_identity && is_greater_than) {
+						swap_first1 = *first1 > *first0;
+					} else if constexpr (is_identity) {
+						swap_first1 = comp(*first1, *first0);
+					} else if constexpr (!is_identity && is_less_than) {
+						key_type lhs = proj(*first1);
+						key_type rhs = proj(*first0);
+						swap_first1  = lhs < rhs;
+					} else if constexpr (!is_identity && is_greater_than) {
+						key_type lhs = proj(*first1);
+						key_type rhs = proj(*first0);
+						swap_first1  = lhs > rhs;
+					} else {
+						key_type lhs = proj(*first1);
+						key_type rhs = proj(*first0);
+						swap_first1  = comp(lhs, rhs);
+					}
+
+					if (swap_first1) {
 						sort::iter_swap(out, first1); //
 						++out;
 						++first1;
@@ -653,9 +750,9 @@ namespace sort {
 	}
 
 	// WARNING: this algorithm is only ok for sorting up to N items! end-start <= N
-	template<typename It, typename Compare = std::less<>, size_t N = 256>
+	template<typename It, typename Compare = sort::less<>, typename Proj = sort::identity<>, size_t N = 256>
 	always_force_inline constexpr void small_merge_sort_size(
-					It start, It end, Compare comp = Compare{}, size_t diff = N)
+					It start, It end, Compare comp = Compare{}, Proj proj = Proj{}, size_t diff = N)
 	{
 		using value_type = sort::iter_value_t<It>;
 		std::array<value_type, N> buffer;
@@ -677,9 +774,9 @@ namespace sort {
 
 				auto b1 = b0 + stride2;
 
-				sort::merge(it, m0, m0, l0, b0, comp);
-				sort::merge(l0, m1, m1, l1, b1, comp);
-				sort::merge(b0, b1, b1, b0 + step, it, comp);
+				sort::merge(it, m0, m0, l0, b0, comp, proj);
+				sort::merge(l0, m1, m1, l1, b1, comp, proj);
+				sort::merge(b0, b1, b1, b0 + step, it, comp, proj);
 
 				it += step;
 			}
@@ -691,9 +788,9 @@ namespace sort {
 				auto   m1        = remaining >= stride3 ? it + stride3 : end;
 				auto   l1        = remaining >= step ? it + step : end;
 
-				auto lhs_out = sort::merge(it, m0, m0, l0, b0, comp);
-				auto rhs_out = sort::merge(l0, m1, m1, l1, lhs_out, comp);
-				sort::merge(b0, lhs_out, lhs_out, rhs_out, it, comp);
+				auto lhs_out = sort::merge(it, m0, m0, l0, b0, comp, proj);
+				auto rhs_out = sort::merge(l0, m1, m1, l1, lhs_out, comp, proj);
+				sort::merge(b0, lhs_out, lhs_out, rhs_out, it, comp, proj);
 			}
 
 			if (stride >= stop)
@@ -703,10 +800,10 @@ namespace sort {
 		}
 	}
 
-	template<typename It, typename Compare = std::less<>>
-	always_force_inline constexpr void small_merge_sort(It start, It end, Compare comp = Compare{})
+	template<typename It, typename Compare = sort::less<>, typename Proj = sort::identity<>>
+	always_force_inline constexpr void small_merge_sort(It start, It end, Compare comp = Compare{}, Proj proj = Proj{})
 	{
-		return sort::small_merge_sort_size(start, end, comp, end - start);
+		return sort::small_merge_sort_size(start, end, comp, proj, end - start);
 	}
 
 	template<class ForwardIt, class UnaryPred>
@@ -1701,22 +1798,41 @@ namespace sort {
 						uint8_t i            = stack.idxs[255 - p];
 						size_t  start_offset = stack.stack_data[i];
 						size_t  end_offset   = stack.stack_data[i + 1];
+						/*
 						sort::small_merge_sort_size(
 										start_it + start_offset, start_it + end_offset,
 										[](const auto& lhs, const auto& rhs) {
 											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
 										},
 										end_offset - start_offset);
+										*/
+						// decltype(extract_key(*std::declval<It>()))
+						if constexpr (is_wrapped_greater_than) {
+							sort::small_merge_sort_size(start_it + start_offset, start_it + end_offset,
+											sort::greater<>{}, extract_key, end_offset - start_offset);
+						} else {
+							sort::small_merge_sort_size(start_it + start_offset, start_it + end_offset, sort::less<>{},
+											extract_key, end_offset - start_offset);
+						}
 					}
 				} else {
 					for (uint16_t p = 0; p < fallback0_count; p++) {
 						uint8_t i            = stack.idxs[255 - (p + fallback1_count)];
 						size_t  start_offset = stack.stack_data[i];
 						size_t  end_offset   = stack.stack_data[i + 1];
+						/*
 						sort::insertion_sort(start_it + start_offset, start_it + end_offset,
 										[](const auto& lhs, const auto& rhs) {
 											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
 										});
+										*/
+						if constexpr (is_wrapped_greater_than) {
+							sort::insertion_sort(start_it + start_offset, start_it + end_offset,
+											sort::greater<>{}, extract_key);
+						} else {
+							sort::insertion_sort(start_it + start_offset, start_it + end_offset, sort::less<>{},
+											extract_key);
+						}
 					}
 
 					for (uint16_t p = 0; p < fallback1_count; p++) {
@@ -2159,14 +2275,24 @@ namespace sort {
 		}
 	}
 
-	template<class It, class Compare> constexpr void insertion_sort(It first, It last, Compare comp)
+	template<class It, class Compare, class Proj>
+	constexpr void insertion_sort(It first, It last, Compare comp, Proj proj)
 	{
-		using T = sort::iter_value_t<It>;
-		auto i  = first;
+		using T        = sort::iter_value_t<It>;
+		using key_type = decltype(Proj{}(*std::declval<It>()));
+
+		constexpr bool is_identity = std::is_same<Proj, sort::identity<>>::value ||
+									 std::is_same<Proj, sort::identity<key_type>>::value;
+		constexpr bool is_less_than = std::is_same<Compare, sort::less<>>::value ||
+									  std::is_same<Compare, sort::less<key_type>>::value;
+		constexpr bool is_greater_than = std::is_same<Compare, sort::greater<>>::value ||
+										 std::is_same<Compare, sort::greater<key_type>>::value;
+
+		auto i = first;
 		if constexpr (sort::is_std_less<Compare>::value) {
-			return sort::insertion_sort(first, last, sort::less<>{});
+			return sort::insertion_sort(first, last, sort::less<>{},proj);
 		} else if constexpr (sort::is_std_greater<Compare>::value) {
-			return sort::insertion_sort(first, last, sort::greater<>{});
+			return sort::insertion_sort(first, last, sort::greater<>{},proj);
 		} else {
 			using namespace sort;
 			if constexpr ((std::is_arithmetic<T>::value || std::is_same<T, bool>::value) &&
@@ -2178,7 +2304,27 @@ namespace sort {
 					for (; j != first;) {
 						auto& rhs = *j;
 						auto& lhs = *(--j);
-						if (!comp(rhs, lhs)) // lhs < rhs (should be lhs <= rhs, rhs >= lhs, !(rhs < lhs))
+						bool  should_exit;
+						if constexpr (is_identity && is_less_than) {
+							should_exit = !(rhs < lhs);
+						} else if constexpr (is_identity && is_greater_than) {
+							should_exit = !(rhs > lhs);
+						} else if constexpr (is_identity) {
+							should_exit = !comp(rhs, lhs);
+						} else if constexpr (!is_identity && is_less_than) {
+							key_type lhs_proj = proj(rhs);
+							key_type rhs_proj = proj(lhs);
+							should_exit       = !(rhs_proj < lhs_proj);
+						} else if constexpr (!is_identity && is_greater_than) {
+							key_type lhs_proj = proj(rhs);
+							key_type rhs_proj = proj(lhs);
+							should_exit       = !(rhs_proj > lhs_proj);
+						} else {
+							key_type lhs_proj = proj(rhs);
+							key_type rhs_proj = proj(lhs);
+							should_exit       = !comp(rhs_proj, lhs_proj);
+						}
+						if (should_exit)
 							break;
 						sort::swap_branchless_unconditional(rhs, lhs);
 					}
@@ -2190,7 +2336,28 @@ namespace sort {
 					T    tmp(std::move(*j));
 
 					for (; j != first;) {
-						if (!comp(tmp, *(--j)))
+						//T    lhs = *(--j);
+						bool should_exit;
+						if constexpr (is_identity && is_less_than) {
+							should_exit = !(tmp < *(--j));
+						} else if constexpr (is_identity && is_greater_than) {
+							should_exit = !(tmp > *(--j));
+						} else if constexpr (is_identity) {
+							should_exit = !comp(tmp, *(--j));
+						} else if constexpr (!is_identity && is_less_than) {
+							key_type lhs_proj = proj(tmp);
+							key_type rhs_proj = proj(*(--j));
+							should_exit       = !(rhs_proj < lhs_proj);
+						} else if constexpr (!is_identity && is_greater_than) {
+							key_type lhs_proj = proj(tmp);
+							key_type rhs_proj = proj(*(--j));
+							should_exit       = !(rhs_proj > lhs_proj);
+						} else {
+							key_type lhs_proj = proj(tmp);
+							key_type rhs_proj = proj(*(--j));
+							should_exit       = !comp(rhs_proj, lhs_proj);
+						}
+						if (should_exit)
 							break;
 						*h = std::move(*j);
 						h  = j;
@@ -2202,10 +2369,31 @@ namespace sort {
 					auto j = i;
 					for (; j != first;) {
 						auto r   = j;
-						auto rhs = *j;
-						auto lhs = *(--j);
-						auto l   = j;
-						if (!comp(rhs, lhs))
+						//auto rhs = *j;
+						//auto lhs = *(--j);
+						auto l   = --j;
+
+						bool should_exit;
+						if constexpr (is_identity && is_less_than) {
+							should_exit = !(*r < *l);
+						} else if constexpr (is_identity && is_greater_than) {
+							should_exit = !(*r > *l);
+						} else if constexpr (is_identity) {
+							should_exit = !comp(*r, *l);
+						} else if constexpr (!is_identity && is_less_than) {
+							key_type lhs_proj = proj(*r);
+							key_type rhs_proj = proj(*l);
+							should_exit       = !(rhs_proj < lhs_proj);
+						} else if constexpr (!is_identity && is_greater_than) {
+							key_type lhs_proj = proj(*r);
+							key_type rhs_proj = proj(*l);
+							should_exit       = !(rhs_proj > lhs_proj);
+						} else {
+							key_type lhs_proj = proj(*r);
+							key_type rhs_proj = proj(*l);
+							should_exit       = !comp(rhs_proj, lhs_proj);
+						}
+						if (should_exit)
 							break;
 						sort::iter_swap(l, r);
 					}
