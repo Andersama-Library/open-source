@@ -456,9 +456,8 @@ namespace sort {
 	template<typename It, typename Compare = sort::less<>>
 	constexpr void intro_sort(It, It, Compare = Compare{}, size_t = ~size_t{0});
 
-	template<typename It, typename Compare = sort::less<>> constexpr void make_heap(It, It, Compare = Compare{});
-
-	template<typename It, typename Compare = sort::less<>> constexpr void sort_heap(It, It, Compare = Compare{});
+	template<typename It, typename Compare = sort::less<>, typename Proj = sort::identity<>> constexpr void make_heap(It, It, Compare = Compare{}, Proj = Proj{});
+	template<typename It, typename Compare = sort::less<>, typename Proj = sort::identity<>> constexpr void sort_heap(It, It, Compare = Compare{}, Proj = Proj{});
 
 	template<typename It> constexpr It prev_iter(It it)
 	{
@@ -1827,8 +1826,8 @@ namespace sort {
 										});
 										*/
 						if constexpr (is_wrapped_greater_than) {
-							sort::insertion_sort(start_it + start_offset, start_it + end_offset,
-											sort::greater<>{}, extract_key);
+							sort::insertion_sort(start_it + start_offset, start_it + end_offset, sort::greater<>{},
+											extract_key);
 						} else {
 							sort::insertion_sort(start_it + start_offset, start_it + end_offset, sort::less<>{},
 											extract_key);
@@ -1839,14 +1838,16 @@ namespace sort {
 						uint8_t i            = stack.idxs[255 - p];
 						size_t  start_offset = stack.stack_data[i];
 						size_t  end_offset   = stack.stack_data[i + 1];
-						sort::make_heap(start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-						sort::sort_heap(start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
+
+						if constexpr (is_wrapped_greater_than) {
+							sort::make_heap(start_it + start_offset, start_it + end_offset, sort::greater<>{}, extract_key);
+							sort::sort_heap(start_it + start_offset, start_it + end_offset, sort::greater<>{}, extract_key);
+						} else {
+							sort::make_heap(start_it + start_offset, start_it + end_offset, sort::less<>{},
+											extract_key);
+							sort::sort_heap(start_it + start_offset, start_it + end_offset, sort::less<>{},
+											extract_key);
+						}
 					}
 				}
 
@@ -1910,14 +1911,18 @@ namespace sort {
 						uint8_t i            = stack.idxs[p];
 						size_t  start_offset = stack.stack_data[i];
 						size_t  end_offset   = stack.stack_data[i + 1];
-						sort::make_heap(start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
-						sort::sort_heap(start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-										});
+
+						if constexpr (is_wrapped_greater_than) {
+							sort::make_heap(start_it + start_offset, start_it + end_offset, sort::greater<>{},
+											extract_key);
+							sort::sort_heap(start_it + start_offset, start_it + end_offset, sort::greater<>{},
+											extract_key);
+						} else {
+							sort::make_heap(start_it + start_offset, start_it + end_offset, sort::less<>{},
+											extract_key);
+							sort::sort_heap(start_it + start_offset, start_it + end_offset, sort::less<>{},
+											extract_key);
+						}
 					}
 				}
 			}
@@ -2290,9 +2295,9 @@ namespace sort {
 
 		auto i = first;
 		if constexpr (sort::is_std_less<Compare>::value) {
-			return sort::insertion_sort(first, last, sort::less<>{},proj);
+			return sort::insertion_sort(first, last, sort::less<>{}, proj);
 		} else if constexpr (sort::is_std_greater<Compare>::value) {
-			return sort::insertion_sort(first, last, sort::greater<>{},proj);
+			return sort::insertion_sort(first, last, sort::greater<>{}, proj);
 		} else {
 			using namespace sort;
 			if constexpr ((std::is_arithmetic<T>::value || std::is_same<T, bool>::value) &&
@@ -2336,7 +2341,7 @@ namespace sort {
 					T    tmp(std::move(*j));
 
 					for (; j != first;) {
-						//T    lhs = *(--j);
+						// T    lhs = *(--j);
 						bool should_exit;
 						if constexpr (is_identity && is_less_than) {
 							should_exit = !(tmp < *(--j));
@@ -2368,10 +2373,10 @@ namespace sort {
 				for (; i != last; ++i) {
 					auto j = i;
 					for (; j != first;) {
-						auto r   = j;
-						//auto rhs = *j;
-						//auto lhs = *(--j);
-						auto l   = --j;
+						auto r = j;
+						// auto rhs = *j;
+						// auto lhs = *(--j);
+						auto l = --j;
 
 						bool should_exit;
 						if constexpr (is_identity && is_less_than) {
@@ -2404,64 +2409,57 @@ namespace sort {
 		}
 	}
 
-	template<class It, class Compare> constexpr void reverse_insertion_sort(It first, It last, Compare comp = Compare{})
-	{
-		using T = sort::iter_value_t<It>;
-		auto i  = first;
-		if constexpr ((std::is_arithmetic<T>::value || std::is_same<T, bool>::value) &&
-						std::is_same<sort::remove_cvref_t<decltype(*first)>,
-										T>::value) { // this second line is to gaurd against proxy references /
-													 // reference wrappers
-			for (; i != last; ++i) { // performs about 25% better than below with simple types like below
-				auto j = i;
-				for (; j != first;) {
-					auto& rhs = *j;
-					auto& lhs = *(--j);
-					if (!comp(lhs, rhs)) // lhs < rhs (should be lhs <= rhs, rhs >= lhs, !(rhs < lhs))
-						break;
-					sort::swap_branchless_unconditional(lhs, rhs);
-				}
-			}
-		} else if constexpr (std::is_move_constructible<T>::value) {
-			for (; i != last; ++i) {
-				auto j = i;
-				auto h = i;
-				T    tmp(std::move(*j));
-
-				for (; j != first;) {
-					if (!comp(*(--j), tmp))
-						break;
-					*h = std::move(*j);
-					h  = j;
-				}
-				*h = std::move(tmp);
-			}
-		} else if constexpr (std::is_assignable<T, T>::value) {
-			for (; i != last; ++i) {
-				auto j = i;
-				for (; j != first;) {
-					auto r   = j;
-					auto rhs = *j;
-					auto lhs = *(--j);
-					auto l   = j;
-					if (!comp(lhs, rhs))
-						break;
-					sort::iter_swap(l, r);
-				}
-			}
-		} else {
-			static_assert(false, "type must be arthmetic, move constructible or assignable!");
-		}
-	}
-
-	template<class It, class T, class Comp>
+	template<class It, class T, class Comp=sort::less<>, class Proj=sort::identity<>>
 	constexpr void push_heap_by_index(
-					It first, iter_difference_t<It> hole, iter_difference_t<It> top, T&& val, Comp comp)
+					It first, iter_difference_t<It> hole, iter_difference_t<It> top, T&& val, Comp comp, Proj proj)
 	{
+		using key_type = decltype(Proj{}(*std::declval<It>()));
+
+		constexpr bool is_identity = std::is_same<Proj, sort::identity<>>::value ||
+									 std::is_same<Proj, sort::identity<key_type>>::value;
+		constexpr bool is_less_than =
+						std::is_same<Comp, sort::less<>>::value || std::is_same<Comp, sort::less<key_type>>::value;
+		constexpr bool is_greater_than = std::is_same<Comp, sort::greater<>>::value ||
+										 std::is_same<Comp, sort::greater<key_type>>::value;
+
 		// percolate hole to top or where val belongs
 		using diff = iter_difference_t<It>;
-		for (diff idx                                                = (hole - 1) >> 1;   // shift for codegen
-						top < hole && comp(*(first + idx), val); idx = (hole - 1) >> 1) { // shift for codegen
+		for (diff idx         = (hole - 1) >> 1;   // shift for codegen
+						; idx = (hole - 1) >> 1) { // shift for codegen
+
+			bool should_break = top < hole;
+				//top < hole && comp(*(first + idx), val);
+
+			It r = first + idx;
+			if constexpr (is_identity && is_less_than) {
+				should_break = should_break && (*r < val);
+			} else if constexpr (is_identity && is_greater_than) {
+				should_break = should_break && (*r > val);
+			} else if constexpr (is_identity) {
+				should_break = should_break && comp(*r, val);
+			} else if constexpr (!is_identity && is_less_than) {
+				if (should_break)
+					break;
+				key_type lhs_proj = proj(*r);
+				key_type rhs_proj = proj(val);
+				should_break      = (rhs_proj < lhs_proj);
+			} else if constexpr (!is_identity && is_greater_than) {
+				if (should_break)
+					break;
+				key_type lhs_proj = proj(*r);
+				key_type rhs_proj = proj(val);
+				should_break      = (rhs_proj > lhs_proj);
+			} else {
+				if (should_break)
+					break;
+				key_type lhs_proj = proj(*r);
+				key_type rhs_proj = proj(val);
+				should_break      = comp(rhs_proj, lhs_proj);
+			}
+
+			if (should_break)
+				break;
+
 			// move hole up to parent
 			*(first + hole) = std::move(*(first + idx));
 			hole            = idx;
@@ -2470,26 +2468,59 @@ namespace sort {
 		*(first + hole) = std::forward<T>(val); // drop _Val into final hole
 	}
 
-	template<class It, class T, class Comp = std::less<>>
+	template<class It, class T, class Comp = std::less<>, class Proj = sort::identity<>>
 	constexpr void pop_heap_hole_by_index(It first, sort::iter_difference_t<It> hole,
-					sort::iter_difference_t<It> bottom, T&& val, Comp comp = Comp{})
+					sort::iter_difference_t<It> bottom, T&& val, Comp comp = Comp{}, Proj proj = Proj{})
 	{
 		// percolate hole to bottom, then push val
 		//_STL_INTERNAL_CHECK(bottom > 0);
+		using key_type = decltype(Proj{}(*std::declval<It>()));
 
-		using diff     = sort::iter_difference_t<It>;
-		const diff top = hole;
-		diff       idx = hole;
+		constexpr bool is_identity = std::is_same<Proj, sort::identity<>>::value ||
+									 std::is_same<Proj, sort::identity<key_type>>::value;
+		constexpr bool is_less_than =
+						std::is_same<Comp, sort::less<>>::value || std::is_same<Comp, sort::less<key_type>>::value;
+		constexpr bool is_greater_than = std::is_same<Comp, sort::greater<>>::value ||
+										 std::is_same<Comp, sort::greater<key_type>>::value;
+		
+		using diff = sort::iter_difference_t<It>;
+		const diff top             = hole;
+		diff       idx             = hole;
 
 		// Check whether idx can have a child before calculating that child's index, since
 		// calculating the child's index can trigger integer overflows
 		const diff max_sequence_non_leaf = (bottom - 1) >> 1; // shift for codegen
 		while (idx < max_sequence_non_leaf) {                 // move hole down to larger child
 			idx = 2 * idx + 2;
-			if (comp(*(first + idx), *(first + (idx - 1)))) {
 
-				--idx;
+			It r = first + idx;
+			It l = first + (idx - 1);
+
+			bool should_offset;
+			if constexpr (is_identity && is_less_than) {
+				should_offset = (*r < *l);
+			} else if constexpr (is_identity && is_greater_than) {
+				should_offset = (*r > *l);
+			} else if constexpr (is_identity) {
+				should_offset = comp(*r, *l);
+			} else if constexpr (!is_identity && is_less_than) {
+				key_type lhs_proj = proj(*r);
+				key_type rhs_proj = proj(*l);
+				should_offset     = (rhs_proj < lhs_proj);
+			} else if constexpr (!is_identity && is_greater_than) {
+				key_type lhs_proj = proj(*r);
+				key_type rhs_proj = proj(*l);
+				should_offset     = (rhs_proj > lhs_proj);
+			} else {
+				key_type lhs_proj = proj(*r);
+				key_type rhs_proj = proj(*l);
+				should_offset     = comp(rhs_proj, lhs_proj);
 			}
+
+			idx -= should_offset;
+			// if (comp(*(first + idx), *(first + (idx - 1)))) {
+			//	--idx;
+			// }
 			*(first + hole) = std::move(*(first + idx));
 			hole            = idx;
 		}
@@ -2499,22 +2530,22 @@ namespace sort {
 			hole            = bottom - 1;
 		}
 
-		sort::push_heap_by_index(first, hole, top, std::forward<T>(val), comp);
+		sort::push_heap_by_index(first, hole, top, std::forward<T>(val), comp, proj);
 	}
 
-	template<typename It, typename Comp> constexpr void make_heap(It start, It end, Comp comp)
+	template<typename It, typename Comp, typename Proj> constexpr void make_heap(It start, It end, Comp comp, Proj proj)
 	{
 		using diff  = typename sort::iter_difference_t<It>;
 		diff bottom = end - start;
 		for (diff hole = bottom >> 1; hole > 0;) {
 			--hole;
 			sort::iter_value_t<It> tmp(std::move(*(start + hole)));
-			sort::pop_heap_hole_by_index(start, hole, bottom, ::std::move(tmp), comp);
+			sort::pop_heap_hole_by_index(start, hole, bottom, ::std::move(tmp), comp, proj);
 		}
 	}
 
-	template<class It, class T, class Unary>
-	constexpr void pop_heap_hole_unchecked(It start, It end, It dest, T&& val, Unary predicate)
+	template<class It, class T, class Unary, class Proj>
+	constexpr void pop_heap_hole_unchecked(It start, It end, It dest, T&& val, Unary predicate, Proj proj = Proj{})
 	{
 		// pop *start to *dest and reheap
 		// precondition: start != end
@@ -2522,24 +2553,24 @@ namespace sort {
 		*dest      = std::move(*start);
 		using diff = typename sort::iter_difference_t<It>;
 		sort::pop_heap_hole_by_index(
-						start, static_cast<diff>(0), static_cast<diff>(end - start), ::std::forward<T>(val), predicate);
+						start, static_cast<diff>(0), static_cast<diff>(end - start), ::std::forward<T>(val), predicate, proj);
 	}
 
-	template<class It, class Comp = std::less<>> constexpr void pop_heap_unchecked(It start, It end, Comp comp)
+	template<class It, class Comp = sort::less<>, class Proj = sort::less<>> constexpr void pop_heap_unchecked(It start, It end, Comp comp = Comp{}, Proj proj = Proj{})
 	{
 		// pop *start to *(end - 1) and reheap
 		if (2 <= end - start) {
 			--end;
 			// decltype(*end)
 			typename sort::iter_value_t<It> val(std::move(*end));
-			sort::pop_heap_hole_unchecked(start, end, end, std::move(val), comp);
+			sort::pop_heap_hole_unchecked(start, end, end, std::move(val), comp, proj);
 		}
 	}
 
-	template<typename It, typename Comp> constexpr void sort_heap(It start, It end, Comp comp)
+	template<typename It, typename Comp, typename Proj> constexpr void sort_heap(It start, It end, Comp comp, Proj proj)
 	{
 		for (; end - start >= 2; --end) {
-			sort::pop_heap_unchecked(start, end, comp);
+			sort::pop_heap_unchecked(start, end, comp, proj);
 		}
 	}
 
