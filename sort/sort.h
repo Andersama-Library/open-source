@@ -1669,7 +1669,29 @@ namespace sort {
 								size_t target_idx = stack.counts[key_byte];
 								swap_target       = start_it + target_idx;
 
-								sort::swap_branchless_unconditional(*swap_left, *swap_target);
+								// sort::swap_branchless_unconditional(*swap_left, *swap_target);
+								if constexpr (::std::is_integral<value_type>::value && ::std::is_same<It,value_type*>::value) {
+									value_type tmp = *swap_left;
+									*swap_left     = *swap_target;
+									*swap_target   = tmp;
+								} else if constexpr (sort::has_swap_member<value_type, value_type>::
+																value) {
+									swap_left->swap(*swap_target);
+								} else if constexpr (::std::is_swappable_with<value_type&, value_type&>::value ||
+													 ::std::is_swappable_with<value_type,
+																	 value_type>::value) { // fallback to std::swap, not
+																						   // necessarily constexpr
+									using std::swap;
+									swap(*swap_left, *swap_target);
+								} else if constexpr (::std::is_trivial<value_type>::value) {
+									value_type tmp = *swap_left;
+									*swap_left     = *swap_target;
+									*swap_target   = tmp;
+								} else {
+									static_assert(false, "swap_branchless_unconditional requires that the types are "
+														 "swappable!");
+								}
+
 								stack.counts[key_byte] += 1;
 							}
 						}
