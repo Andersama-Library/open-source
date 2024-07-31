@@ -760,12 +760,13 @@ namespace sort {
 					It start, It end, Compare comp = Compare{}, Proj proj = Proj{}, size_t diff = N)
 	{
 		using value_type = sort::iter_value_t<It>;
-		std::array<value_type, N> buffer;
+		value_type buffer[N]; // std::array<value_type, N> buffer;
 
 		size_t stop   = (diff >> 2) + ((diff & 0x3) > 0);
 		size_t stride = 1;
 
-		auto b0 = buffer.data();
+		// auto b0 = buffer.data();
+		value_type* b0 = buffer;
 		for (;;) {
 			auto   it      = start;
 			size_t stride2 = stride << 1;
@@ -1670,12 +1671,12 @@ namespace sort {
 								swap_target       = start_it + target_idx;
 
 								// sort::swap_branchless_unconditional(*swap_left, *swap_target);
-								if constexpr (::std::is_integral<value_type>::value && ::std::is_same<It,value_type*>::value) {
+								if constexpr (::std::is_integral<value_type>::value &&
+												::std::is_same<It, value_type*>::value) {
 									value_type tmp = *swap_left;
 									*swap_left     = *swap_target;
 									*swap_target   = tmp;
-								} else if constexpr (sort::has_swap_member<value_type, value_type>::
-																value) {
+								} else if constexpr (sort::has_swap_member<value_type, value_type>::value) {
 									swap_left->swap(*swap_target);
 								} else if constexpr (::std::is_swappable_with<value_type&, value_type&>::value ||
 													 ::std::is_swappable_with<value_type,
