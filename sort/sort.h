@@ -2113,75 +2113,39 @@ namespace sort {
 				if (item_count <= small_merge_sort_threshold) {
 					if constexpr (::std::is_same<sort::identity_less_than<>, ExtractKey>::value ||
 									::std::is_same<sort::identity_less_than<key_type>, ExtractKey>::value) {
-						return sort::small_merge_sort(f, l, [](const auto& lhs, const auto& rhs) {
-							using namespace sort;
-							return lhs < rhs;
-						});
+						return sort::small_merge_sort(f, l, sort::less<>{}, sort::identity<>{});
 					} else if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
 										 ::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
-						return sort::small_merge_sort(f, l, [](const auto& lhs, const auto& rhs) {
-							using namespace sort;
-							return lhs > rhs;
-						});
+						return sort::small_merge_sort(f, l, sort::greater<>{}, sort::identity<>{});
 					} else {
-						return sort::small_merge_sort(f, l, [](const auto& lhs, const auto& rhs) {
-							using namespace sort;
-							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-						});
+						return sort::small_merge_sort(f, l, sort::less<>{}, extract_key);
 					}
 				}
 			} else {
 				if (item_count <= insertion_sort_threshold) {
 					if constexpr (::std::is_same<sort::identity_less_than<>, ExtractKey>::value ||
 									::std::is_same<sort::identity_less_than<key_type>, ExtractKey>::value) {
-						return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) {
-							using namespace sort;
-							return lhs < rhs;
-						});
+						return sort::insertion_sort(f, l, sort::less<>{}, sort::identity<>{});
 					} else if constexpr (::std::is_same<sort::identity_greater_than<>, ExtractKey>::value ||
 										 ::std::is_same<sort::identity_greater_than<key_type>, ExtractKey>::value) {
-						return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) {
-							using namespace sort;
-							return lhs > rhs;
-						});
+						return sort::insertion_sort(f, l, sort::greater<>{}, sort::identity<>{});
 					} else {
-						return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) {
-							using namespace sort;
-							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-						});
+						return sort::insertion_sort(f, l, sort::less<>{}, extract_key);
 					}
 				}
 
 				if (item_count <= intro_sort_threshold) {
 					if constexpr (::std::is_same<sort::identity_less_than<>, ExtractKey>::value ||
 									::std::is_same<sort::identity_less_than<key_type>, ExtractKey>::value) {
-						sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) {
-							using namespace sort;
-							return lhs < rhs;
-						});
-						return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) {
-							using namespace sort;
-							return lhs < rhs;
-						});
+						sort::make_heap(f, l, sort::less<>{}, sort::identity<>{});
+						return sort::sort_heap(f, l, sort::less<>{}, sort::identity<>{});
 					} else if constexpr (::std::is_same<sort::identity_greater_than<>, ExtractKey>::value ||
 										 ::std::is_same<sort::identity_greater_than<key_type>, ExtractKey>::value) {
-						sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) {
-							using namespace sort;
-							return lhs > rhs;
-						});
-						return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) {
-							using namespace sort;
-							return lhs > rhs;
-						});
+						sort::make_heap(f, l, sort::greater<>{}, sort::identity<>{});
+						return sort::sort_heap(f, l, sort::greater<>{}, sort::identity<>{});
 					} else {
-						sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) {
-							using namespace sort;
-							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-						});
-						return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) {
-							using namespace sort;
-							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
-						});
+						sort::make_heap(f, l, sort::less<>{}, extract_key);
+						return sort::sort_heap(f, l, sort::less<>{}, extract_key);
 					}
 				}
 			}
