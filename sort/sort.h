@@ -456,8 +456,10 @@ namespace sort {
 	template<typename It, typename Compare = sort::less<>>
 	constexpr void intro_sort(It, It, Compare = Compare{}, size_t = ~size_t{0});
 
-	template<typename It, typename Compare = sort::less<>, typename Proj = sort::identity<>> constexpr void make_heap(It, It, Compare = Compare{}, Proj = Proj{});
-	template<typename It, typename Compare = sort::less<>, typename Proj = sort::identity<>> constexpr void sort_heap(It, It, Compare = Compare{}, Proj = Proj{});
+	template<typename It, typename Compare = sort::less<>, typename Proj = sort::identity<>>
+	constexpr void make_heap(It, It, Compare = Compare{}, Proj = Proj{});
+	template<typename It, typename Compare = sort::less<>, typename Proj = sort::identity<>>
+	constexpr void sort_heap(It, It, Compare = Compare{}, Proj = Proj{});
 
 	template<typename It> constexpr It prev_iter(It it)
 	{
@@ -569,7 +571,11 @@ namespace sort {
 		using key_type = decltype(Proj{}(*std::declval<It>()));
 
 		constexpr bool is_identity = std::is_same<Proj, sort::identity<>>::value ||
-									 std::is_same<Proj, sort::identity<key_type>>::value;
+									 std::is_same<Proj, sort::identity<key_type>>::value ||
+									 std::is_same<Proj, sort::identity_less_than<>>::value ||
+									 std::is_same<Proj, sort::identity_less_than<key_type>>::value ||
+									 std::is_same<Proj, sort::identity_greater_than<>>::value ||
+									 std::is_same<Proj, sort::identity_greater_than<key_type>>::value;
 		constexpr bool is_less_than =
 						std::is_same<Comp, sort::less<>>::value || std::is_same<Comp, sort::less<key_type>>::value;
 		constexpr bool is_greater_than = std::is_same<Comp, sort::greater<>>::value ||
@@ -1840,8 +1846,10 @@ namespace sort {
 						size_t  end_offset   = stack.stack_data[i + 1];
 
 						if constexpr (is_wrapped_greater_than) {
-							sort::make_heap(start_it + start_offset, start_it + end_offset, sort::greater<>{}, extract_key);
-							sort::sort_heap(start_it + start_offset, start_it + end_offset, sort::greater<>{}, extract_key);
+							sort::make_heap(start_it + start_offset, start_it + end_offset, sort::greater<>{},
+											extract_key);
+							sort::sort_heap(start_it + start_offset, start_it + end_offset, sort::greater<>{},
+											extract_key);
 						} else {
 							sort::make_heap(start_it + start_offset, start_it + end_offset, sort::less<>{},
 											extract_key);
@@ -2251,7 +2259,12 @@ namespace sort {
 		using key_type = decltype(Proj{}(*std::declval<It>()));
 
 		constexpr bool is_identity = std::is_same<Proj, sort::identity<>>::value ||
-									 std::is_same<Proj, sort::identity<key_type>>::value;
+									 std::is_same<Proj, sort::identity<key_type>>::value ||
+									 std::is_same<Proj, sort::identity_less_than<>>::value ||
+									 std::is_same<Proj, sort::identity_less_than<key_type>>::value ||
+									 std::is_same<Proj, sort::identity_greater_than<>>::value ||
+									 std::is_same<Proj, sort::identity_greater_than<key_type>>::value;
+
 		constexpr bool is_less_than = std::is_same<Compare, sort::less<>>::value ||
 									  std::is_same<Compare, sort::less<key_type>>::value;
 		constexpr bool is_greater_than = std::is_same<Compare, sort::greater<>>::value ||
@@ -2373,14 +2386,18 @@ namespace sort {
 		}
 	}
 
-	template<class It, class T, class Comp=sort::less<>, class Proj=sort::identity<>>
+	template<class It, class T, class Comp = sort::less<>, class Proj = sort::identity<>>
 	constexpr void push_heap_by_index(
 					It first, iter_difference_t<It> hole, iter_difference_t<It> top, T&& val, Comp comp, Proj proj)
 	{
 		using key_type = decltype(Proj{}(*std::declval<It>()));
 
 		constexpr bool is_identity = std::is_same<Proj, sort::identity<>>::value ||
-									 std::is_same<Proj, sort::identity<key_type>>::value;
+									 std::is_same<Proj, sort::identity<key_type>>::value ||
+									 std::is_same<Proj, sort::identity_less_than<>>::value ||
+									 std::is_same<Proj, sort::identity_less_than<key_type>>::value ||
+									 std::is_same<Proj, sort::identity_greater_than<>>::value ||
+									 std::is_same<Proj, sort::identity_greater_than<key_type>>::value;
 		constexpr bool is_less_than =
 						std::is_same<Comp, sort::less<>>::value || std::is_same<Comp, sort::less<key_type>>::value;
 		constexpr bool is_greater_than = std::is_same<Comp, sort::greater<>>::value ||
@@ -2392,7 +2409,7 @@ namespace sort {
 						; idx = (hole - 1) >> 1) { // shift for codegen
 
 			bool should_break = top < hole;
-				//top < hole && comp(*(first + idx), val);
+			// top < hole && comp(*(first + idx), val);
 
 			It r = first + idx;
 			if constexpr (is_identity && is_less_than) {
@@ -2441,15 +2458,19 @@ namespace sort {
 		using key_type = decltype(Proj{}(*std::declval<It>()));
 
 		constexpr bool is_identity = std::is_same<Proj, sort::identity<>>::value ||
-									 std::is_same<Proj, sort::identity<key_type>>::value;
+									 std::is_same<Proj, sort::identity<key_type>>::value ||
+									 std::is_same<Proj, sort::identity_less_than<>>::value ||
+									 std::is_same<Proj, sort::identity_less_than<key_type>>::value ||
+									 std::is_same<Proj, sort::identity_greater_than<>>::value ||
+									 std::is_same<Proj, sort::identity_greater_than<key_type>>::value;
 		constexpr bool is_less_than =
 						std::is_same<Comp, sort::less<>>::value || std::is_same<Comp, sort::less<key_type>>::value;
 		constexpr bool is_greater_than = std::is_same<Comp, sort::greater<>>::value ||
 										 std::is_same<Comp, sort::greater<key_type>>::value;
-		
-		using diff = sort::iter_difference_t<It>;
-		const diff top             = hole;
-		diff       idx             = hole;
+
+		using diff     = sort::iter_difference_t<It>;
+		const diff top = hole;
+		diff       idx = hole;
 
 		// Check whether idx can have a child before calculating that child's index, since
 		// calculating the child's index can trigger integer overflows
@@ -2516,11 +2537,12 @@ namespace sort {
 		// precondition: start != dest
 		*dest      = std::move(*start);
 		using diff = typename sort::iter_difference_t<It>;
-		sort::pop_heap_hole_by_index(
-						start, static_cast<diff>(0), static_cast<diff>(end - start), ::std::forward<T>(val), predicate, proj);
+		sort::pop_heap_hole_by_index(start, static_cast<diff>(0), static_cast<diff>(end - start),
+						::std::forward<T>(val), predicate, proj);
 	}
 
-	template<class It, class Comp = sort::less<>, class Proj = sort::less<>> constexpr void pop_heap_unchecked(It start, It end, Comp comp = Comp{}, Proj proj = Proj{})
+	template<class It, class Comp = sort::less<>, class Proj = sort::less<>>
+	constexpr void pop_heap_unchecked(It start, It end, Comp comp = Comp{}, Proj proj = Proj{})
 	{
 		// pop *start to *(end - 1) and reheap
 		if (2 <= end - start) {
