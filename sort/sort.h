@@ -1202,6 +1202,7 @@ namespace sort {
 			uint16_t fallback0_count;
 			uint16_t fallback1_count;
 			uint16_t recursion_count;
+			uint64_t mark_ordered[4] = {0, 0, 0, 0};
 
 			It iterators[iterator_count];
 
@@ -1302,6 +1303,9 @@ namespace sort {
 				is_ordered &= (uint8_t)(key_byte >= last_key);
 				last_key = key_byte;
 
+				mark_ordered[key_byte >> 6] = is_ordered << (key_byte & 0x3f);
+				mark_ordered[last_key >> 6] = is_ordered << (last_key & 0x3f);
+
 				++total_items;
 				++stack.stack_data[key_byte];
 			}
@@ -1328,6 +1332,13 @@ namespace sort {
 					size_t tidx3 = idx + 3;
 					idx += 4;
 
+					uint64_t ordered_mask = mark_ordered[idx >> 6];
+
+					bool is_unordered  = !(ordered_mask >> (tidx & 0x3f));
+					bool is_unordered1 = !(ordered_mask >> (tidx1 & 0x3f));
+					bool is_unordered2 = !(ordered_mask >> (tidx2 & 0x3f));
+					bool is_unordered3 = !(ordered_mask >> (tidx3 & 0x3f));
+
 					count[0] = stack.stack_data[tidx];
 					count[1] = stack.stack_data[tidx1];
 					count[2] = stack.stack_data[tidx2];
@@ -1347,14 +1358,14 @@ namespace sort {
 					stack.idxs[recursion_count]       = tidx;
 					stack.idxs[255 - fallback1_count] = tidx;
 					if constexpr (can_small_sort) {
-						recursion_count += count[0] > small_merge_sort_threshold;
-						fallback1_count += count[0] > 1 && count[0] <= small_merge_sort_threshold;
+						recursion_count += is_unordered && count[0] > small_merge_sort_threshold;
+						fallback1_count += is_unordered && count[0] > 1 && count[0] <= small_merge_sort_threshold;
 					} else if constexpr (is_forward_iterator || is_bidirectional_iterator) {
-						recursion_count += count[0] > 2;
-						fallback1_count += count[0] == 2;
+						recursion_count += is_unordered && count[0] > 2;
+						fallback1_count += is_unordered && count[0] == 2;
 					} else {
-						recursion_count += count[0] > intro_sort_threshold;
-						fallback1_count += count[0] > insertion_sort_threshold && count[0] <= intro_sort_threshold;
+						recursion_count += is_unordered && count[0] > intro_sort_threshold;
+						fallback1_count += is_unordered && count[0] > insertion_sort_threshold && count[0] <= intro_sort_threshold;
 					}
 
 					stack.counts[tidx]     = total;
@@ -1364,14 +1375,14 @@ namespace sort {
 					stack.idxs[recursion_count]       = tidx1;
 					stack.idxs[255 - fallback1_count] = tidx1;
 					if constexpr (can_small_sort) {
-						recursion_count += count[1] > small_merge_sort_threshold;
-						fallback1_count += count[1] > 1 && count[1] <= small_merge_sort_threshold;
+						recursion_count += is_unordered1 && count[1] > small_merge_sort_threshold;
+						fallback1_count += is_unordered1 && count[1] > 1 && count[1] <= small_merge_sort_threshold;
 					} else if constexpr (is_forward_iterator || is_bidirectional_iterator) {
-						recursion_count += count[1] > 2;
-						fallback1_count += count[1] == 2;
+						recursion_count += is_unordered1 && count[1] > 2;
+						fallback1_count += is_unordered1 && count[1] == 2;
 					} else {
-						recursion_count += count[1] > intro_sort_threshold;
-						fallback1_count += count[1] > insertion_sort_threshold && count[1] <= intro_sort_threshold;
+						recursion_count += is_unordered1 && count[1] > intro_sort_threshold;
+						fallback1_count += is_unordered1 && count[1] > insertion_sort_threshold && count[1] <= intro_sort_threshold;
 					}
 
 					stack.counts[tidx1]     = total;
@@ -1381,14 +1392,14 @@ namespace sort {
 					stack.idxs[recursion_count]       = tidx2;
 					stack.idxs[255 - fallback1_count] = tidx2;
 					if constexpr (can_small_sort) {
-						recursion_count += count[2] > small_merge_sort_threshold;
-						fallback1_count += count[2] > 1 && count[2] <= small_merge_sort_threshold;
+						recursion_count += is_unordered2 && count[2] > small_merge_sort_threshold;
+						fallback1_count += is_unordered2 && count[2] > 1 && count[2] <= small_merge_sort_threshold;
 					} else if constexpr (is_forward_iterator || is_bidirectional_iterator) {
-						recursion_count += count[2] > 2;
-						fallback1_count += count[2] == 2;
+						recursion_count += is_unordered2 && count[2] > 2;
+						fallback1_count += is_unordered2 && count[2] == 2;
 					} else {
-						recursion_count += count[2] > intro_sort_threshold;
-						fallback1_count += count[2] > insertion_sort_threshold && count[2] <= intro_sort_threshold;
+						recursion_count += is_unordered2 && count[2] > intro_sort_threshold;
+						fallback1_count += is_unordered2 && count[2] > insertion_sort_threshold && count[2] <= intro_sort_threshold;
 					}
 
 					stack.counts[tidx2]     = total;
@@ -1398,14 +1409,14 @@ namespace sort {
 					stack.idxs[recursion_count]       = tidx3;
 					stack.idxs[255 - fallback1_count] = tidx3;
 					if constexpr (can_small_sort) {
-						recursion_count += count[3] > small_merge_sort_threshold;
-						fallback1_count += count[3] > 1 && count[3] <= small_merge_sort_threshold;
+						recursion_count += is_unordered3 && count[3] > small_merge_sort_threshold;
+						fallback1_count += is_unordered3 && count[3] > 1 && count[3] <= small_merge_sort_threshold;
 					} else if constexpr (is_forward_iterator || is_bidirectional_iterator) {
-						recursion_count += count[3] > 2;
-						fallback1_count += count[3] == 2;
+						recursion_count += is_unordered3 && count[3] > 2;
+						fallback1_count += is_unordered3 && count[3] == 2;
 					} else {
-						recursion_count += count[3] > intro_sort_threshold;
-						fallback1_count += count[3] > insertion_sort_threshold && count[3] <= intro_sort_threshold;
+						recursion_count += is_unordered3 && count[3] > intro_sort_threshold;
+						fallback1_count += is_unordered3 && count[3] > insertion_sort_threshold && count[3] <= intro_sort_threshold;
 					}
 
 					stack.counts[tidx3]     = total;
@@ -1421,9 +1432,12 @@ namespace sort {
 				if constexpr (!can_small_sort) {
 					size_t remaining = 256 - (fallback1_count + recursion_count);
 					for (idx = 0; idx < 256 && remaining; idx++) {
+						uint64_t ordered_mask = mark_ordered[idx >> 6];
+						bool is_unordered = !(ordered_mask >> (idx & 0x3f));
+
 						size_t count = stack.stack_data[idx + 1] - stack.stack_data[idx];
 						stack.idxs[255 - (fallback1_count + fallback0_count)] = idx;
-						uint8_t within_fallback0_range = count > 1 && count <= insertion_sort_threshold;
+						uint8_t within_fallback0_range = is_unordered && count > 1 && count <= insertion_sort_threshold;
 						fallback0_count += within_fallback0_range;
 						remaining -= within_fallback0_range;
 					}
