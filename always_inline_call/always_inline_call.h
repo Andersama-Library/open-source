@@ -23,18 +23,24 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+/*
+Usage: In front of statements or blocks
+*/
+
+#ifndef always_inline_call
 #if __GNUC__
-#define always_force_inline __attribute__((always_inline))
+#define always_inline_call [[gnu::always_inline]]
 #elif __clang__
-#define always_force_inline __attribute__((always_inline))
+#define always_inline_call [[clang::always_inline]]
 #elif _MSC_VER
-#define always_force_inline __forceinline
+#define always_inline_call [[msvc::forceinline_calls]]
 #elif __EMSCRIPTEN__
-#define always_force_inline
+#define always_inline_call
 #elif __MINGW32__
-#define always_force_inline
+#define always_inline_call
 #elif __MINGW64__
-#define always_force_inline
+#define always_inline_call
 #else
-#define always_force_inline
+#define always_inline_call
+#endif
 #endif
