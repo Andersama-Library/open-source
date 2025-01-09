@@ -54,9 +54,10 @@ namespace simple_benchmark {
 
 	[[nodiscard]] uint64_t get_iterations(::std::chrono::nanoseconds elapsed, uint64_t iters) noexcept
 	{
-		double d_elapsed     = (double)elapsed.count();
-		auto   d_target_time = get_target_time();
-		auto   d_new_iters   = (double)d_target_time.count() / d_elapsed * (double)iters;
+		uint64_t ns            = elapsed.count();
+		double   d_elapsed     = (double)(ns ? ns : 1ull);
+		auto     d_target_time = get_target_time();
+		auto     d_new_iters   = (double)d_target_time.count() / d_elapsed * (double)iters;
 
 		d_new_iters *= 1.0 + 0.2;
 
