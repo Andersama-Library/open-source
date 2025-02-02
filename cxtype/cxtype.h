@@ -105,7 +105,7 @@ namespace cxtype {
 	}
 
 	constexpr bool isodigit(unsigned char c) noexcept {
-		return ((unsigned char)(c - '0')) < 7;
+		return ((unsigned char)(c - '0')) < 8;
 	}
 
 	constexpr bool iscntrl(unsigned char c) noexcept {
