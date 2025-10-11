@@ -260,7 +260,7 @@ namespace sort {
 	// Wrappers so we can expand > and < support inside namespace sort vs namespace std (which can be UB)
 	template<> struct less<void> {
 		template<class T0, class T1>
-		_NODISCARD constexpr auto operator()(T0&& lhs, T1&& rhs) const
+		[[nodiscard]] constexpr auto operator()(T0&& lhs, T1&& rhs) const
 						noexcept(noexcept(static_cast<T0&&>(lhs) < static_cast<T1&&>(rhs))) // strengthened
 						-> decltype(static_cast<T0&&>(lhs) < static_cast<T1&&>(rhs))
 		{
@@ -282,7 +282,7 @@ namespace sort {
 
 	template<> struct greater<void> {
 		template<class T0, class T1>
-		_NODISCARD constexpr auto operator()(T0&& lhs, T1&& rhs) const
+		[[nodiscard]] constexpr auto operator()(T0&& lhs, T1&& rhs) const
 						noexcept(noexcept(static_cast<T0&&>(lhs) < static_cast<T1&&>(rhs))) // strengthened
 						-> decltype(static_cast<T0&&>(lhs) < static_cast<T1&&>(rhs))
 		{
