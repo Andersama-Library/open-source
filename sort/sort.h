@@ -997,14 +997,14 @@ namespace sort {
 				}
 			} else if constexpr (sort::is_wrapped_greater_than<ExtractKey>::value) {
 				if constexpr (sizeof...(Idxs)) {
-					return sort::counting_sort_recursive(start, end, sort::wrapped_greater_than{[](const auto& v) {
-						return ::std::get<Idx>(ExtractKey{}(v));
+					return sort::counting_sort_recursive(start, end, sort::wrapped_greater_than{[extract_key](const auto& v) {
+						return ::std::get<Idx>(extract_key(v));
 					}},
 									std::make_index_sequence<std::tuple_size<key_type>::value>{},
 									parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{}, remaining);
 				} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
-					return sort::counting_sort_recursive(start, end, sort::wrapped_greater_than{[](const auto& v) {
-						return ::std::get<Idx>(ExtractKey{}(v));
+					return sort::counting_sort_recursive(start, end, sort::wrapped_greater_than{[extract_key](const auto& v) {
+						return ::std::get<Idx>(extract_key(v));
 					}},
 									std::make_index_sequence<std::tuple_size<key_type>::value>{},
 									parameter_list<Deferred...>{}, remaining);
@@ -1012,12 +1012,12 @@ namespace sort {
 			} else {
 				if constexpr (sizeof...(Idxs)) {
 					return sort::counting_sort_recursive(
-									start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
+									start, end, [extract_key](const auto& v) { return ::std::get<Idx>(extract_key(v)); },
 									std::make_index_sequence<std::tuple_size<key_type>::value>{},
 									parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{}, remaining);
 				} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
 					return sort::counting_sort_recursive(
-									start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
+									start, end, [extract_key](const auto& v) { return ::std::get<Idx>(extract_key(v)); },
 									std::make_index_sequence<std::tuple_size<key_type>::value>{},
 									parameter_list<Deferred...>{}, remaining);
 				}
@@ -1045,15 +1045,15 @@ namespace sort {
 							::std::is_same<identity_greater_than<key_type>, ExtractKey>::value ||
 							sort::is_wrapped_greater_than<ExtractKey>::value) {
 				if constexpr (std::is_same<key_type, bool>::value) {
-					split = sort::partition_branchless(start, end, [](const auto& v) { return ExtractKey{}(v); });
+					split = sort::partition_branchless(start, end, [extract_key](const auto& v) { return extract_key(v); });
 				} else {
-					split = sort::partition_branchless(start, end, [](const auto& v) { return ExtractKey{}(v)[0]; });
+					split = sort::partition_branchless(start, end, [extract_key](const auto& v) { return extract_key(v)[0]; });
 				}
 			} else {
 				if constexpr (std::is_same<key_type, bool>::value) {
-					split = sort::partition_branchless(start, end, [](const auto& v) { return !ExtractKey{}(v); });
+					split = sort::partition_branchless(start, end, [extract_key](const auto& v) { return !extract_key(v); });
 				} else {
-					split = sort::partition_branchless(start, end, [](const auto& v) { return !ExtractKey{}(v)[0]; });
+					split = sort::partition_branchless(start, end, [extract_key](const auto& v) { return !extract_key(v)[0]; });
 				}
 			}
 			if constexpr ((sizeof...(Idxs)) || (sizeof...(Deferred))) {
@@ -1080,15 +1080,15 @@ namespace sort {
 							::std::is_same<identity_greater_than<key_type>, ExtractKey>::value ||
 							sort::is_wrapped_greater_than<ExtractKey>::value) {
 				if constexpr (sizeof...(Idxs)) {
-					return sort::counting_sort_recursive(start, end, sort::wrapped_greater_than{[](const auto& v) {
-						return ::std::get<Idx>(ExtractKey{}(v));
+					return sort::counting_sort_recursive(start, end, sort::wrapped_greater_than{[extract_key](const auto& v) {
+						return ::std::get<Idx>(extract_key(v));
 					}},
 									sort::make_reversed_index_sequence(
 													std::make_index_sequence<std::tuple_size<key_type>::value>{}),
 									parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{}, remaining);
 				} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
-					return sort::counting_sort_recursive(start, end, sort::wrapped_greater_than{[](const auto& v) {
-						return ::std::get<Idx>(ExtractKey{}(v));
+					return sort::counting_sort_recursive(start, end, sort::wrapped_greater_than{[extract_key](const auto& v) {
+						return ::std::get<Idx>(extract_key(v));
 					}},
 									sort::make_reversed_index_sequence(
 													std::make_index_sequence<std::tuple_size<key_type>::value>{}),
@@ -1097,13 +1097,13 @@ namespace sort {
 			} else {
 				if constexpr (sizeof...(Idxs)) {
 					return sort::counting_sort_recursive(
-									start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
+									start, end, [extract_key](const auto& v) { return ::std::get<Idx>(extract_key(v)); },
 									sort::make_reversed_index_sequence(
 													std::make_index_sequence<std::tuple_size<key_type>::value>{}),
 									parameter_list<defer_callback<ExtractKey, Idxs...>, Deferred...>{}, remaining);
 				} else { // if we're on the last item of a tuple, don't push a deferred callback onto the template stack
 					return sort::counting_sort_recursive(
-									start, end, [](const auto& v) { return ::std::get<Idx>(ExtractKey{}(v)); },
+									start, end, [extract_key](const auto& v) { return ::std::get<Idx>(extract_key(v)); },
 									sort::make_reversed_index_sequence(
 													std::make_index_sequence<std::tuple_size<key_type>::value>{}),
 									parameter_list<Deferred...>{}, remaining);
@@ -1650,8 +1650,8 @@ namespace sort {
 						size_t  end_offset   = stack.stack_data[i + 1];
 						sort::small_merge_sort_size(
 										start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										[extract_key](const auto& lhs, const auto& rhs) {
+											return extract_key(lhs) < extract_key(rhs);
 										},
 										end_offset - start_offset);
 					}
@@ -1661,8 +1661,8 @@ namespace sort {
 						size_t  start_offset = stack.stack_data[i];
 						size_t  end_offset   = stack.stack_data[i + 1];
 						sort::insertion_sort(start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										[extract_key](const auto& lhs, const auto& rhs) {
+											return extract_key(lhs) < extract_key(rhs);
 										});
 					}
 
@@ -1671,12 +1671,12 @@ namespace sort {
 						size_t  start_offset = stack.stack_data[i];
 						size_t  end_offset   = stack.stack_data[i + 1];
 						sort::make_heap(start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										[extract_key](const auto& lhs, const auto& rhs) {
+											return extract_key(lhs) < extract_key(rhs);
 										});
 						sort::sort_heap(start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										[extract_key](const auto& lhs, const auto& rhs) {
+											return extract_key(lhs) < extract_key(rhs);
 										});
 					}
 				}
@@ -1741,12 +1741,12 @@ namespace sort {
 						size_t  start_offset = stack.stack_data[i];
 						size_t  end_offset   = stack.stack_data[i + 1];
 						sort::make_heap(start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										[extract_key](const auto& lhs, const auto& rhs) {
+											return extract_key(lhs) < extract_key(rhs);
 										});
 						sort::sort_heap(start_it + start_offset, start_it + end_offset,
-										[](const auto& lhs, const auto& rhs) {
-											return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+										[extract_key](const auto& lhs, const auto& rhs) {
+											return extract_key(lhs) < extract_key(rhs);
 										});
 					}
 				}
@@ -1885,9 +1885,9 @@ namespace sort {
 							return lhs > rhs;
 						});
 					} else {
-						return sort::small_merge_sort(f, l, [](const auto& lhs, const auto& rhs) {
+						return sort::small_merge_sort(f, l, [extract_key](const auto& lhs, const auto& rhs) {
 							using namespace sort;
-							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+							return extract_key(lhs) < extract_key(rhs);
 						});
 					}
 				}
@@ -1906,9 +1906,9 @@ namespace sort {
 							return lhs > rhs;
 						});
 					} else {
-						return sort::insertion_sort(f, l, [](const auto& lhs, const auto& rhs) {
+						return sort::insertion_sort(f, l, [extract_key](const auto& lhs, const auto& rhs) {
 							using namespace sort;
-							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+							return extract_key(lhs) < extract_key(rhs);
 						});
 					}
 				}
@@ -1935,13 +1935,13 @@ namespace sort {
 							return lhs > rhs;
 						});
 					} else {
-						sort::make_heap(f, l, [](const auto& lhs, const auto& rhs) {
+						sort::make_heap(f, l, [extract_key](const auto& lhs, const auto& rhs) {
 							using namespace sort;
-							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+							return extract_key(lhs) < extract_key(rhs);
 						});
 						return sort::sort_heap(f, l, [](const auto& lhs, const auto& rhs) {
 							using namespace sort;
-							return ExtractKey{}(lhs) < ExtractKey{}(rhs);
+							return extract_key(lhs) < extract_key(rhs);
 						});
 					}
 				}
@@ -1959,16 +1959,16 @@ namespace sort {
 		} else if constexpr (sort::is_bitset<key_type>::value && sort::bitset_size(key_type{}) <= 1) {
 			if constexpr (::std::is_same<identity_greater_than<>, ExtractKey>::value ||
 							::std::is_same<identity_greater_than<key_type>, ExtractKey>::value) {
-				sort::partition_branchless(f, l, [](const auto& value) { return (ExtractKey{}(value)[0]); });
+				sort::partition_branchless(f, l, [extract_key](const auto& value) { return (extract_key(value)[0]); });
 			} else {
-				sort::partition_branchless(f, l, [](const auto& value) { return !(ExtractKey{}(value)[0]); });
+				sort::partition_branchless(f, l, [extract_key](const auto& value) { return !(extract_key(value)[0]); });
 			}
 #endif
 #endif
 		} else if constexpr (::std::is_same<key_type, bool>::value || ::std::is_same<key_type, const bool&>::value) {
 			// partition puts things that return true first...but counting sort should treat this as a value so...we'll
 			// flip the extract function to keep the semantics the same as expected
-			sort::partition_branchless(f, l, [](const auto& value) { return !ExtractKey{}(value); });
+			sort::partition_branchless(f, l, [extract_key](const auto& value) { return !extract_key(value); });
 		} else if constexpr (is_array<key_type>::value) {
 			sort::counting_sort_recursive(f, l, extract_key,
 							sort::make_reversed_index_sequence(
