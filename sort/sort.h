@@ -1268,13 +1268,17 @@ namespace sort {
 
 					if constexpr (is_forward_iterator || is_bidirectional_iterator) {
 						iterators[tidx] = start_it;
-						std::advance(start_it, count[0]);
+						if (start_it != end)
+							std::advance(start_it, count[0]);
 						iterators[tidx1] = start_it;
-						std::advance(start_it, count[1]);
+						if (start_it != end)
+							std::advance(start_it, count[1]);
 						iterators[tidx2] = start_it;
-						std::advance(start_it, count[2]);
+						if (start_it != end)
+							std::advance(start_it, count[2]);
 						iterators[tidx3] = start_it;
-						std::advance(start_it, count[3]);
+						if (start_it != end)
+							std::advance(start_it, count[3]);
 					}
 
 					stack.idxs[recursion_count]       = tidx;
