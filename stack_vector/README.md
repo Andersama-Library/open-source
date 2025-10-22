@@ -45,7 +45,7 @@ Additional modifications functions for faster (but unsafe manipulations):
 Usage
 -----
 
-`stack_vector` is ideal for eaither scratch work on trivially destructible data with a known maximum size or capacity.
+`stack_vector` is ideal for scratch work on trivially destructible data with a known maximum size or capacity.
 With a slight additional cost of space it is a fantastic drop-in replacement for `std::array` where vector-like functionality is needed.
 ```c
 stack_vector<int,1024> buffer{};
