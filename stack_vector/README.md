@@ -5,6 +5,9 @@ This is a version of `std::vector` which strictly is allocated on the stack (no 
 
 This includes additional specialized non-standard functions.
 
+Should be a drop-in replacement for C++26's
+[inplace_vector](https://cppreference.com/w/cpp/container/inplace_vector.html)
+
 Additional modifications functions for faster (but unsafe manipulations):
 ```c
 	template <class... Args> constexpr reference unchecked_emplace_back(Args &&...args) {
