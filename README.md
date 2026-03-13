@@ -28,7 +28,7 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(open_source)
 include_directories(${open_source_SOURCE_DIR}/)
-# we should now be able to #include "forceinline/forceinline.h"
+# we should now be able to #include "always_force_inline/always_force_inline.h"
 ```
 
-For organizational purposes source files related to particular utilties will be under their own folders like [forceinline](/forceinline).
+For organizational purposes source files related to particular utilties will be under their own folders like [always_force_inline](/always_force_inline).
